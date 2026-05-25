@@ -14,8 +14,7 @@ from tidy3d.components.mode.solver import compute_modes as _compute_modes
 
 from meow.cross_section import CrossSection
 from meow.fde.post_process import post_process_modes
-from meow.mode import Mode, Modes
-
+from meow.mode import Mode, Modes, inner_product, normalize
 
 def compute_modes_tidy3d(
     cs: CrossSection,
@@ -111,4 +110,9 @@ def compute_modes_tidy3d(
         ]
 
     modes = sorted(modes, key=lambda m: float(np.real(m.neff)), reverse=True)
-    return post_process(modes)
+
+    # Normalize the modes with respect to the inner product, which is important for accurate mode overlap calculations.
+    modes1 = []
+    for mode in modes:
+        modes1.append(normalize(mode, inner_product))
+    return modes1 # post_process(modes) BAD: this orthonormalizes the modes with respect to the L2 inner product, which for whatever reason causes the effective indices to change which breaks the eme solver
