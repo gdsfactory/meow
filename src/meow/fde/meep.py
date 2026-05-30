@@ -94,7 +94,7 @@ def compute_modes_meep(
             band_num = mode_num,
             parity = mp.NO_PARITY,
             kpoint = mp.Vector3(z=1),
-            resolution = 1/(cs.mesh.x[1] - cs.mesh.x[0]),
+            # resolution = 1/(cs.mesh.x[1] - cs.mesh.x[0]),
             eigensolver_tol = 1e-12
         )
         # Get the field data, TODO: Optimize this

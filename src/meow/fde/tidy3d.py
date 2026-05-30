@@ -112,7 +112,7 @@ def compute_modes_tidy3d(
     modes = sorted(modes, key=lambda m: float(np.real(m.neff)), reverse=True)
 
     # Normalize the modes with respect to the inner product, which is important for accurate mode overlap calculations.
-    modes1 = []
+    norm_modes = []
     for mode in modes:
-        modes1.append(normalize(mode, inner_product))
-    return modes1 # post_process(modes) BAD: this orthonormalizes the modes with respect to the L2 inner product, which for whatever reason causes the effective indices to change which breaks the eme solver
+        norm_modes.append(normalize(mode, inner_product))
+    return norm_modes # post_process(modes) # BAD: this orthonormalizes the modes with respect to the L2 inner product, which for whatever reason causes the effective indices to change which breaks the eme solver
