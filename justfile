@@ -29,10 +29,10 @@ test: ipykernel
 docs:
   sed 's|](docs/|](|g' README.md > docs/index.md
   sed 's|^#|###|g' CHANGELOG.md | sed 's|^### \[0|## [0|g' > docs/changelog.md
-  uv run mkdocs build
+  uv run zensical build
 
 serve: docs
-  uv run mkdocs serve -a localhost:8080
+  uv run zensical serve
 
 nbrun: ipykernel
   find notebooks -maxdepth 2 -mindepth 1 -name "*.ipynb" -not -path "*/.ipynb_checkpoints/*" -not -path "./.venv/*" | xargs parallel -j `nproc --all` uv run papermill {} {} -k meow :::

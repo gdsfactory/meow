@@ -204,6 +204,6 @@ def _assert_default_mesh_setting(condition: bool, param_name: str) -> None:  # n
         msg = (
             f"Setting mesh.{param_name} is currently not supported in the "
             "Lumerical Backend. Please open an issue of submit a PR on GitHub "
-            "to fix this: https://github.com/flaport/meow",
+            "to fix this: https://github.com/gdsfactory/meow",
         )
         raise NotImplementedError(msg)

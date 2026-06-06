@@ -1,0 +1,56 @@
+[project]
+copyright = "Copyright (c) 2025, Floris Laporte, Apache-2.0"
+dev_addr = "localhost:8080"
+extra_css = [
+  "https://unpkg.com/katex@0/dist/katex.min.css"
+]
+extra_javascript = [
+  "javascripts/katex.js",
+  "https://unpkg.com/katex@0/dist/katex.min.js",
+  "https://unpkg.com/katex@0/dist/contrib/auto-render.min.js"
+]
+nav = [
+  {"home" = "index.md"},
+  {"quickstart" = "nbs/00_introduction.md"},
+  {"examples" = [
+    {"from gds" = "nbs/01_gds_taper.md"},
+    {"taper length sweep" = "nbs/02_taper_length_sweep.md"},
+    {"different modes" = "nbs/03_unequal_number_of_modes.md"},
+    {"rib interface" = "nbs/04_rib_interface.md"},
+    {"mode propagation" = "nbs/05_propagate_modes.md"}
+  ]},
+  {"algorithm" = "algorithm.md"},
+  {"api" = "api.md"},
+  {"changelog" = "changelog.md"}
+]
+repo_name = "gdsfactory/meow"
+repo_url = "https://github.com/gdsfactory/meow"
+site_author = "Floris Laporte"
+site_description = "Modeling of Eigenmodes and Overlaps in Waveguides"
+site_name = "meow"
+site_url = "https://gdsfactory.github.io/meow"
+
+[project.markdown_extensions.pymdownx.arithmatex]
+generic = true
+
+[project.plugins.mkdocstrings.handlers.python]
+inventories = [
+  "https://docs.jax.dev/en/latest/objects.inv",
+  "https://docs.kidger.site/jaxtyping/objects.inv",
+  "https://docs.python.org/3/objects.inv",
+  "https://docs.xarray.dev/en/stable/objects.inv",
+  "https://matplotlib.org/stable/objects.inv",
+  "https://numpy.org/doc/stable/objects.inv",
+  "https://pandas.pydata.org/docs/objects.inv",
+  "https://python-markdown.github.io/objects.inv",
+  "https://scipy.github.io/devdocs/objects.inv",
+  "https://typing.readthedocs.io/en/latest/objects.inv",
+  "https://www.mkdocs.org/objects.inv"
+]
+paths = [
+  "src"
+]
+
+[project.theme]
+favicon = "assets/logo-small.ico"
+logo = "assets/logo-small.svg"

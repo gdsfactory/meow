@@ -12,10 +12,7 @@ dev = [
   "ipympl>=0.9.0",
   "ipywidgets>=8.0.0",
   "mkautodoc>=0.2.0",
-  "mkdocs-autorefs>=1.3.0",
-  "mkdocs-shadcn @ git+https://github.com/gdsfactory/mkdocs-shadcn.git",
-  "mkdocs<2",
-  "mkdocstrings[python]>=0.27.0",
+  "mkdocstrings-python>=2.0.3",
   "mkinit>=1.1.0",
   "nb-clean>=4.0.1",
   "nbconvert>=7.16.6",
@@ -29,7 +26,8 @@ dev = [
   "ruff>=0.15.5",
   "tmm>=0.2.0",
   "towncrier>=24.0.0",
-  "ty==0.0.26"
+  "ty==0.0.26",
+  "zensical>=0.0.11"
 ]
 
 [project]
