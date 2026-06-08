@@ -282,6 +282,7 @@ def plot_fields(
     backwards: list[ComplexArray1D],
     y: float,
     z: FloatArray1D,
+    component: str = "Ex",
 ) -> tuple[ComplexArray2D, FloatArray1D]:
     """Reconstruct an ``Ex(x, z)`` field slice from propagated modal amplitudes.
 
@@ -312,7 +313,7 @@ def plot_fields(
         z_ = z[i_min:] if i_max == 0 else z[i_min:i_max]
         z_local = z_ - cell.z_min
         for mode, fwd, bwd in zip(mode_set, forward, backward, strict=False):
-            e_slice = mode.Ex[:, i_y]
+            e_slice = getattr(mode, component)[:, i_y]
             ex += jnp.outer(
                 fwd * e_slice.T, jnp.exp(2j * np.pi * mode.neff / mode.env.wl * z_local)
             )
@@ -421,6 +422,7 @@ def propagate_modes(
     sax_backend: sax.BackendLike = "default",
     interface_kwargs: dict[str, Any] | None = None,
     track: bool = True,
+    component: str = "Ex",
     tracking_inner_product: Callable = inner_product,
     interfaces_fn: Callable = compute_interface_s_matrices,
     interface_fn: Callable = compute_interface_s_matrix,
@@ -498,4 +500,4 @@ def propagate_modes(
     r2ls = r2l_matrices(pairs, actual_sax_backend)
 
     forwards, backwards = propagate(l2rs, r2ls, excitation_l, excitation_r)
-    return plot_fields(tracked_modes, cells, forwards, backwards, y, z)
+    return plot_fields(tracked_modes, cells, forwards, backwards, y, z, component)
