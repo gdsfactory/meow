@@ -64,20 +64,47 @@ def compute_modes_meep(
         else:
             geometry_oxide += [mp.Block(size=mp.Vector3(struct.geometry.x_max - struct.geometry.x_min, struct.geometry.y_max - struct.geometry.y_min, mp.inf), center=mp.Vector3(struct.geometry.x_max + struct.geometry.x_min, struct.geometry.y_max + struct.geometry.y_min, 0)/2, material=material)]
 
+    # The mode-solve grid must match the CrossSection's own declared mesh
+    # (cs.mesh.x / cs.mesh.y) rather than the raw bounding box of the
+    # extruded structures: cladding layers routinely extend past the
+    # intended mesh window (e.g. a larger vertical extrusion span than the
+    # mesh's own y-extent), and deriving Nx/Ny from that mismatched bbox
+    # produces a field grid whose shape doesn't match cs.mesh — breaking
+    # inner_product()/normalize() downstream. mp.Block geometries are still
+    # built from each structure's own true extent (a block wider than the
+    # simulation cell is simply clipped by meep, which is correct).
+    dx = cs.mesh.x[1] - cs.mesh.x[0]
+    dy = cs.mesh.y[1] - cs.mesh.y[0]
+    if not np.isclose(dx, dy):
+        msg = (
+            f"compute_modes_meep requires a square mesh (equal x/y pixel "
+            f"spacing) since meep's resolution is isotropic; got dx={dx}, dy={dy}."
+        )
+        raise ValueError(msg)
+    # mode fields must live on the mesh's cell-centered grid (mesh.x_/y_,
+    # length N-1) to match what inner_product()/normalize() expect — not
+    # the N-point vertex grid (mesh.x/y).
+    Nx = len(cs.mesh.x_)
+    Ny = len(cs.mesh.y_)
+    x_span = cs.mesh.x[-1] - cs.mesh.x[0]
+    y_span = cs.mesh.y[-1] - cs.mesh.y[0]
+    x_center = (cs.mesh.x[-1] + cs.mesh.x[0]) / 2
+    y_center = (cs.mesh.y[-1] + cs.mesh.y[0]) / 2
+
     sim = mp.Simulation(
-        cell_size=mp.Vector3(x_max-x_min, y_max-y_min, 1),
+        cell_size=mp.Vector3(x_span, y_span, 1),
         geometry=geometry_oxide + geometry_waveguide,
         eps_averaging=True,
-        resolution=1/(cs.mesh.x[1] - cs.mesh.x[0]),
+        resolution=1/dx,
     )
     geometry_lattice = mp.Volume(
         center = (
-            mp.Vector3((x_max + x_min)/2,(y_max + y_min)/2,0)
+            mp.Vector3(x_center, y_center, 0)
         ),
         size = (
             mp.Vector3(
-                x_max - x_min,
-                y_max - y_min,
+                x_span,
+                y_span,
                 0
             )
         )
@@ -97,19 +124,11 @@ def compute_modes_meep(
             # resolution = 1/(cs.mesh.x[1] - cs.mesh.x[0]),
             eigensolver_tol = 1e-12
         )
-        # Get the field data, TODO: Optimize this
-        Nx = int(np.round((x_max - x_min)/(cs.mesh.y[1] - cs.mesh.y[0])))
-        Ny = int(np.round((y_max - y_min)/(cs.mesh.x[1] - cs.mesh.x[0])))
-        y = np.linspace(
-            geometry_lattice.center.y-geometry_lattice.size.y/2,
-            geometry_lattice.center.y+geometry_lattice.size.y/2,
-            Ny
-        )
-        x = np.linspace(
-            geometry_lattice.center.x-geometry_lattice.size.x/2,
-            geometry_lattice.center.x+geometry_lattice.size.x/2,
-            Nx
-        )
+        # Sample on the CrossSection's own cell-centered grid (matches
+        # cs.mesh.x_/y_ exactly, so downstream inner_product()/normalize()
+        # shapes align).
+        y = cs.mesh.y_
+        x = cs.mesh.x_
         Ex = np.zeros([Nx,Ny]) # arrays to store the data
         Ey = np.zeros([Nx,Ny]) # arrays to store the data
         Ez = np.zeros([Nx,Ny]) # arrays to store the data
