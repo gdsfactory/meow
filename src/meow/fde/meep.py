@@ -160,6 +160,7 @@ def compute_modes_meep(
         modes.append(mode)
 
     modes = sorted(modes, key=lambda m: float(np.real(m.neff)), reverse=True)
+    sim.reset_meep()  # free this simulation's grid/structure/PML now, not at interpreter shutdown
     return modes
 
 # Function to get material of rectangle
