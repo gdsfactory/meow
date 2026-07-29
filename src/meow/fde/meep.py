@@ -50,7 +50,7 @@ def compute_modes_meep(
     geometry_waveguide = []
     geometry_oxide = []
     for struct in cs.structures:
-        n, material = meep_material(struct.material.n, struct.material.params["wl"], cs.env.wl)
+        n, material = meep_material(struct.material, cs.env)
         if x_min > struct.geometry.x_min:
             x_min = struct.geometry.x_min
         if x_max < struct.geometry.x_max:
@@ -164,7 +164,29 @@ def compute_modes_meep(
     return modes
 
 # Function to get material of rectangle
-def meep_material(ns, wls, wl):
-    idx = np.argmin(np.abs(wls - wl))
-    n = ns[idx]
-    return n, mp.Medium(epsilon=n**2)
+def meep_material(material, env):
+    """(n, mp.Medium) for a meow material at this environment's wavelength.
+
+    Asks the material for its own index — `Material.__call__(env)` — instead of
+    reaching into `material.n` / `material.params["wl"]` and re-implementing the
+    lookup here, which is what this did until 2026-07-28:
+
+        idx = np.argmin(np.abs(wls - wl))    # nearest sample, not interpolated
+        n = ns[idx]
+
+    That was a nearest-neighbour snap over the raw table, and meow's own
+    `SampledMaterial.__call__` already interpolates properly, so this bypassed
+    a correct implementation for a worse one. On meow's silicon table it put a
+    **step discontinuity in the middle of the C-band**: only two samples exist
+    between 1.45 and 1.65 µm (1.5320 and 1.6000), so every wavelength up to
+    their midpoint got n = 3.4784 and everything past it got 3.4710, jumping
+    0.0063 between 1.56 and 1.57 µm. That is the +0.00022 kink in the EME's
+    Δn_eff recorded as directional_coupler_validation.md item 8. Away from the
+    step it was biased too — +0.00196 at 1.55 µm.
+
+    Going through `__call__` also stops assuming the material *has* a sampled
+    table, so an analytic material (a Sellmeier/Lorentzian model, say) works
+    here unchanged — `params["wl"]` would have raised.
+    """
+    n = complex(np.asarray(material(env)).reshape(-1)[0])
+    return n.real, mp.Medium(epsilon=n.real**2)
