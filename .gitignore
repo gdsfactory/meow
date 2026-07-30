@@ -1,4 +1,5 @@
 # files
+.DS_Store
 *.c
 *.cover
 *.egg

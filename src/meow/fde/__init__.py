@@ -11,6 +11,9 @@ from meow.fde.lumerical import (
     create_lumerical_geometries,
     get_sim,
 )
+from meow.fde.meep import (
+    compute_modes_meep,
+)
 from meow.fde.post_process import (
     filter_modes,
     normalize_modes,
@@ -20,14 +23,12 @@ from meow.fde.post_process import (
 from meow.fde.tidy3d import (
     compute_modes_tidy3d,
 )
-from meow.fde.meep import (
-    compute_modes_meep,
-)
 
 __all__ = [
     "Sim",
     "compute_modes",
     "compute_modes_lumerical",
+    "compute_modes_meep",
     "compute_modes_tidy3d",
     "create_lumerical_geometries",
     "filter_modes",

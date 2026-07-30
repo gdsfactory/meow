@@ -284,7 +284,7 @@ def plot_fields(
     z: FloatArray1D,
     component: str = "Ex",
 ) -> tuple[ComplexArray2D, FloatArray1D]:
-    """Reconstruct an ``Ex(x, z)`` field slice from propagated modal amplitudes.
+    """Reconstruct a field component slice from propagated modal amplitudes.
 
     Args:
         modes: Mode sets for each cell.
@@ -293,9 +293,11 @@ def plot_fields(
         backwards: Backward amplitude vectors per cell.
         y: Transverse y-coordinate at which to sample the field.
         z: Global z-grid on which to reconstruct the field.
+        component: Name of the field component to reconstruct (e.g.
+            ``"Ex"``, ``"Ey"``, ``"Hz"``).
 
     Returns:
-        Tuple ``(field, x)`` where ``field`` is the complex ``Ex(z, x)``
+        Tuple ``(field, x)`` where ``field`` is the complex component(z, x)
         array and ``x`` is the transverse sampling grid.
     """
     mesh_y = cells[0].mesh.y
@@ -454,14 +456,16 @@ def propagate_modes(
             ``interfaces_fn`` and ``interface_fn``.
         track: Whether to reorder and phase-align modes between neighboring
             cells before propagation.
+        component: Name of the field component to reconstruct (e.g.
+            ``"Ex"``, ``"Ey"``, ``"Hz"``).
         tracking_inner_product: Inner product used for mode tracking.
         interfaces_fn: Factory for interface S-matrices across the stack.
         interface_fn: Factory for the identity-like same-basis interface used to
             seed the left-to-right accumulation.
 
     Returns:
-        ``(field, x)`` where ``field`` is the reconstructed ``Ex(z, x)`` slice
-        and ``x`` is the transverse sampling grid.
+        ``(field, x)`` where ``field`` is the reconstructed component(z, x)
+        slice and ``x`` is the transverse sampling grid.
     """
     if len(cells) != len(modes):
         msg = f"len(cells) != len(modes): {len(cells)} != {len(modes)}"

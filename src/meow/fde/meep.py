@@ -1,30 +1,26 @@
-"""FDE Tidy3d backend (default backend for MEOW)."""
+"""FDE MEEP backend."""
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable
-from types import SimpleNamespace
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 from pydantic import PositiveFloat, PositiveInt
-from scipy.constants import c
-from tidy3d.components.mode.solver import compute_modes as _compute_modes
-import meep as mp
 
 from meow.cross_section import CrossSection
+from meow.environment import Environment
 from meow.fde.post_process import post_process_modes
+from meow.materials import Material
 from meow.mode import Mode, Modes, inner_product, normalize
 
-mp.verbosity(0) # Suppress MEEP output
 
 def compute_modes_meep(
     cs: CrossSection,
     num_modes: PositiveInt = 10,
     target_neff: PositiveFloat | None = None,
     precision: Literal["single", "double"] = "double",
-    post_process: Callable = post_process_modes,
+    post_process: Callable = post_process_modes,  # noqa: ARG001
 ) -> Modes:
     """Compute ``Modes`` for a given ``CrossSection``.
 
@@ -33,36 +29,66 @@ def compute_modes_meep(
         num_modes: number of modes to compute.
         target_neff: effective index near which to search for modes.
         precision: floating-point precision, ``"single"`` or ``"double"``.
-        post_process: callable applied to the raw mode list before returning.
+        post_process: accepted for parity with the other backends but not
+            called (see the note at the end of this function).
 
     Returns:
-        The computed and post-processed collection of modes.
+        The computed collection of modes, individually normalized but not
+        run through ``post_process``.
     """
+    import meep as mp
+
+    mp.verbosity(0)  # Suppress MEEP output
+
     if num_modes < 1:
         msg = "You need to request at least 1 mode."
         raise ValueError(msg)
+    if target_neff is not None:
+        msg = "compute_modes_meep does not yet support target_neff."
+        raise NotImplementedError(msg)
+    if precision != "double":
+        msg = "compute_modes_meep does not yet support precision != 'double'."
+        raise NotImplementedError(msg)
 
     # Assume all structures are rectangles
-    x_min = 0
-    x_max = 0
-    y_min = 0
-    y_max = 0
     geometry_waveguide = []
     geometry_oxide = []
     for struct in cs.structures:
         n, material = meep_material(struct.material, cs.env)
-        if x_min > struct.geometry.x_min:
-            x_min = struct.geometry.x_min
-        if x_max < struct.geometry.x_max:
-            x_max = struct.geometry.x_max
-        if y_min > struct.geometry.y_min:
-            y_min = struct.geometry.y_min
-        if y_max < struct.geometry.y_max:
-            y_max = struct.geometry.y_max
-        if n > 2: # Assume silicon if n > 2, otherwise assume oxide
-            geometry_waveguide += [mp.Block(size=mp.Vector3(struct.geometry.x_max - struct.geometry.x_min, struct.geometry.y_max - struct.geometry.y_min, mp.inf), center=mp.Vector3(struct.geometry.x_max + struct.geometry.x_min, struct.geometry.y_max + struct.geometry.y_min, 0)/2, material=material)]
+        if n > 2:  # Assume silicon if n > 2, otherwise assume oxide
+            geometry_waveguide += [
+                mp.Block(
+                    size=mp.Vector3(
+                        struct.geometry.x_max - struct.geometry.x_min,
+                        struct.geometry.y_max - struct.geometry.y_min,
+                        mp.inf,
+                    ),
+                    center=mp.Vector3(
+                        struct.geometry.x_max + struct.geometry.x_min,
+                        struct.geometry.y_max + struct.geometry.y_min,
+                        0,
+                    )
+                    / 2,
+                    material=material,
+                )
+            ]
         else:
-            geometry_oxide += [mp.Block(size=mp.Vector3(struct.geometry.x_max - struct.geometry.x_min, struct.geometry.y_max - struct.geometry.y_min, mp.inf), center=mp.Vector3(struct.geometry.x_max + struct.geometry.x_min, struct.geometry.y_max + struct.geometry.y_min, 0)/2, material=material)]
+            geometry_oxide += [
+                mp.Block(
+                    size=mp.Vector3(
+                        struct.geometry.x_max - struct.geometry.x_min,
+                        struct.geometry.y_max - struct.geometry.y_min,
+                        mp.inf,
+                    ),
+                    center=mp.Vector3(
+                        struct.geometry.x_max + struct.geometry.x_min,
+                        struct.geometry.y_max + struct.geometry.y_min,
+                        0,
+                    )
+                    / 2,
+                    material=material,
+                )
+            ]
 
     # The mode-solve grid must match the CrossSection's own declared mesh
     # (cs.mesh.x / cs.mesh.y) rather than the raw bounding box of the
@@ -95,76 +121,64 @@ def compute_modes_meep(
         cell_size=mp.Vector3(x_span, y_span, 1),
         geometry=geometry_oxide + geometry_waveguide,
         eps_averaging=True,
-        resolution=1/dx,
+        resolution=1 / dx,
     )
     geometry_lattice = mp.Volume(
-        center = (
-            mp.Vector3(x_center, y_center, 0)
-        ),
-        size = (
-            mp.Vector3(
-                x_span,
-                y_span,
-                0
-            )
-        )
+        center=(mp.Vector3(x_center, y_center, 0)), size=(mp.Vector3(x_span, y_span, 0))
     )
     sim.init_sim()
 
     modes = []
-    for mode_num in range(1, num_modes+1):
+    for mode_num in range(1, num_modes + 1):
         # Calculate the mode data for the given mode number
         mode_data = sim.get_eigenmode(
-            frequency = 1/cs.env.wl ,
-            direction = mp.NO_DIRECTION,
-            where = geometry_lattice,
-            band_num = mode_num,
-            parity = mp.NO_PARITY,
-            kpoint = mp.Vector3(z=1),
+            frequency=1 / cs.env.wl,
+            direction=mp.NO_DIRECTION,
+            where=geometry_lattice,
+            band_num=mode_num,
+            parity=mp.NO_PARITY,
+            kpoint=mp.Vector3(z=1),
             # resolution = 1/(cs.mesh.x[1] - cs.mesh.x[0]),
-            eigensolver_tol = 1e-12
+            eigensolver_tol=1e-12,
         )
         # Sample on the CrossSection's own cell-centered grid (matches
         # cs.mesh.x_/y_ exactly, so downstream inner_product()/normalize()
         # shapes align).
         y = cs.mesh.y_
         x = cs.mesh.x_
-        Ex = np.zeros([Nx,Ny]) # arrays to store the data
-        Ey = np.zeros([Nx,Ny]) # arrays to store the data
-        Ez = np.zeros([Nx,Ny]) # arrays to store the data
-        Hx = np.zeros([Nx,Ny]) # arrays to store the data
-        Hy = np.zeros([Nx,Ny]) # arrays to store the data
-        Hz = np.zeros([Nx,Ny]) # arrays to store the data
+        components = {
+            "Ex": mp.Ex,
+            "Ey": mp.Ey,
+            "Ez": mp.Ez,
+            "Hx": mp.Hx,
+            "Hy": mp.Hy,
+            "Hz": mp.Hz,
+        }
+        fields = {name: np.zeros([Nx, Ny]) for name in components}
         for i in range(Nx):
             for j in range(Ny):
-                Ex[i,j] = np.real(mode_data.amplitude(point=mp.Vector3(x[i],y[j]),component=mp.Ex))
-                Ey[i,j] = np.real(mode_data.amplitude(point=mp.Vector3(x[i],y[j]),component=mp.Ey))
-                Ez[i,j] = np.real(mode_data.amplitude(point=mp.Vector3(x[i],y[j]),component=mp.Ez))
-                Hx[i,j] = np.real(mode_data.amplitude(point=mp.Vector3(x[i],y[j]),component=mp.Hx))
-                Hy[i,j] = np.real(mode_data.amplitude(point=mp.Vector3(x[i],y[j]),component=mp.Hy))
-                Hz[i,j] = np.real(mode_data.amplitude(point=mp.Vector3(x[i],y[j]),component=mp.Hz))
+                point = mp.Vector3(x[i], y[j])
+                for name, component in components.items():
+                    fields[name][i, j] = np.real(
+                        mode_data.amplitude(point=point, component=component)
+                    )
         # Get the effective index of the mode
         neff = mode_data.k[2] * cs.env.wl
         # Normalize and save the mode data in the modes list
-        mode = Mode(
-            cs=cs,
-            Ex=Ex,
-            Ey=Ey,
-            Ez=Ez,
-            Hx=Hx,
-            Hy=Hy,
-            Hz=Hz,
-            neff=neff,
-        )
+        mode = Mode(cs=cs, neff=neff, **fields)
         mode = normalize(mode, inner_product)
         modes.append(mode)
 
     modes = sorted(modes, key=lambda m: float(np.real(m.neff)), reverse=True)
-    sim.reset_meep()  # free this simulation's grid/structure/PML now, not at interpreter shutdown
+    # free this simulation's grid/structure/PML now, not at interpreter shutdown
+    sim.reset_meep()
+    # Intentionally skip `post_process` here, matching compute_modes_tidy3d:
+    # orthonormalize_modes()'s Gram-Schmidt step changes effective indices,
+    # which breaks the EME solver. See the matching note in tidy3d.py.
     return modes
 
-# Function to get material of rectangle
-def meep_material(material, env):
+
+def meep_material(material: Material, env: Environment) -> tuple[float, Any]:
     """(n, mp.Medium) for a meow material at this environment's wavelength.
 
     Asks the material for its own index — `Material.__call__(env)` — instead of
@@ -188,5 +202,7 @@ def meep_material(material, env):
     table, so an analytic material (a Sellmeier/Lorentzian model, say) works
     here unchanged — `params["wl"]` would have raised.
     """
+    import meep as mp
+
     n = complex(np.asarray(material(env)).reshape(-1)[0])
     return n.real, mp.Medium(epsilon=n.real**2)
