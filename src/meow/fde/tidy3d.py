@@ -14,7 +14,7 @@ from tidy3d.components.mode.solver import compute_modes as _compute_modes
 
 from meow.cross_section import CrossSection
 from meow.fde.post_process import post_process_modes
-from meow.mode import Mode, Modes, inner_product, normalize
+from meow.mode import Mode, Modes
 
 
 def compute_modes_tidy3d(
@@ -22,7 +22,7 @@ def compute_modes_tidy3d(
     num_modes: PositiveInt = 10,
     target_neff: PositiveFloat | None = None,
     precision: Literal["single", "double"] = "double",
-    post_process: Callable = post_process_modes,  # noqa: ARG001
+    post_process: Callable = post_process_modes,
 ) -> Modes:
     """Compute ``Modes`` for a given ``CrossSection``.
 
@@ -112,10 +112,4 @@ def compute_modes_tidy3d(
 
     modes = sorted(modes, key=lambda m: float(np.real(m.neff)), reverse=True)
 
-    # Intentionally normalize only, bypassing `post_process` (Gram-Schmidt
-    # orthonormalization against the L2 inner product): that step changes the
-    # effective indices, which breaks the EME solver. `post_process` stays in
-    # the signature for parity with the other backends, but isn't called
-    # here until that root-cause bug in orthonormalize_modes()/
-    # post_process_modes() is fixed. See PR discussion for repro details.
-    return [normalize(mode, inner_product) for mode in modes]
+    return post_process(modes)

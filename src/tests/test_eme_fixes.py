@@ -5,6 +5,7 @@ import pytest
 import sax
 
 import meow.eme.propagation as eme_propagation
+from meow.cell import Cell
 from meow.eme.interface import (
     compute_interface_s_matrix,
     enforce_passivity,
@@ -72,3 +73,40 @@ def test_passivity_enforcement_in_interface_s_matrix() -> None:
     # With passivity_method="none", no correction is applied
     # (singular values may or may not exceed 1 depending on modes)
     assert S_none.shape == S_clip.shape
+
+
+def test_plot_fields_applies_backward_component_signs() -> None:
+    from mode_data import MODE_DATA
+
+    reference = Mode.model_validate(MODE_DATA)
+    ones = np.ones_like(reference.Ex)
+    mode = reference.model_copy(
+        update={
+            "neff": 0.0,
+            "Ex": ones,
+            "Ey": ones,
+            "Ez": ones,
+            "Hx": ones,
+            "Hy": ones,
+            "Hz": ones,
+        }
+    )
+    cell = Cell(structures=[], mesh=mode.mesh, z_min=0.0, z_max=1.0)
+    kwargs = {
+        "modes": [[mode]],
+        "cells": [cell],
+        "forwards": [np.array([0.0])],
+        "backwards": [np.array([1.0])],
+        "y": 0.0,
+        "z": np.array([0.0]),
+    }
+
+    ex, _ = eme_propagation.plot_fields(**kwargs, component="Ex")
+    hx, _ = eme_propagation.plot_fields(**kwargs, component="Hx")
+    ez, _ = eme_propagation.plot_fields(**kwargs, component="Ez")
+    hz, _ = eme_propagation.plot_fields(**kwargs, component="Hz")
+
+    assert np.allclose(ex, 1.0)
+    assert np.allclose(hx, -1.0)
+    assert np.allclose(ez, -1.0)
+    assert np.allclose(hz, 1.0)

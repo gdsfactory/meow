@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import jax.numpy as jnp
 import numpy as np
@@ -15,6 +15,17 @@ from meow.arrays import ComplexArray1D, ComplexArray2D, FloatArray1D
 from meow.cell import Cell
 from meow.eme.interface import compute_interface_s_matrices, compute_interface_s_matrix
 from meow.mode import Mode, Modes, inner_product
+
+FieldComponent: TypeAlias = Literal["Ex", "Ey", "Ez", "Hx", "Hy", "Hz"]
+
+_BACKWARD_COMPONENT_SIGN: dict[FieldComponent, int] = {
+    "Ex": 1,
+    "Ey": 1,
+    "Ez": -1,
+    "Hx": -1,
+    "Hy": -1,
+    "Hz": 1,
+}
 
 
 def compute_propagation_s_matrix(modes: Modes, cell_length: float) -> sax.SDictMM:
@@ -282,7 +293,7 @@ def plot_fields(
     backwards: list[ComplexArray1D],
     y: float,
     z: FloatArray1D,
-    component: str = "Ex",
+    component: FieldComponent = "Ex",
 ) -> tuple[ComplexArray2D, FloatArray1D]:
     """Reconstruct a field component slice from propagated modal amplitudes.
 
@@ -300,6 +311,11 @@ def plot_fields(
         Tuple ``(field, x)`` where ``field`` is the complex component(z, x)
         array and ``x`` is the transverse sampling grid.
     """
+    if component not in _BACKWARD_COMPONENT_SIGN:
+        valid = ", ".join(_BACKWARD_COMPONENT_SIGN)
+        msg = f"Unknown field component {component!r}; expected one of: {valid}."
+        raise ValueError(msg)
+
     mesh_y = cells[0].mesh.y
     mesh_x = cells[0].mesh.x
     mesh_x = mesh_x[:-1] + np.diff(mesh_x) / 2
@@ -320,7 +336,7 @@ def plot_fields(
                 fwd * e_slice.T, jnp.exp(2j * np.pi * mode.neff / mode.env.wl * z_local)
             )
             ex += jnp.outer(
-                bwd * e_slice.T,
+                _BACKWARD_COMPONENT_SIGN[component] * bwd * e_slice.T,
                 jnp.exp(-2j * np.pi * mode.neff / mode.env.wl * z_local),
             )
 
@@ -424,7 +440,7 @@ def propagate_modes(
     sax_backend: sax.BackendLike = "default",
     interface_kwargs: dict[str, Any] | None = None,
     track: bool = True,
-    component: str = "Ex",
+    component: FieldComponent = "Ex",
     tracking_inner_product: Callable = inner_product,
     interfaces_fn: Callable = compute_interface_s_matrices,
     interface_fn: Callable = compute_interface_s_matrix,
