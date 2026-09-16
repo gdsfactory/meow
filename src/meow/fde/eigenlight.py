@@ -52,7 +52,7 @@ def compute_modes_eigenlight(
         raise NotImplementedError(msg)
 
     try:
-        import eigenlight  # ty: ignore[unresolved-import]
+        import eigenlight
     except ModuleNotFoundError as error:
         msg = (
             "The EigenLight backend requires the optional 'eigenlight' package. "
@@ -62,7 +62,7 @@ def compute_modes_eigenlight(
         raise ModuleNotFoundError(msg) from error
 
     target = float(target_neff) if target_neff is not None else _target_neff(cs)
-    result = eigenlight.compute_modes(
+    result = eigenlight.compute_modes(  # ty: ignore[unresolved-attribute]
         eps_xx=np.ascontiguousarray(cs.nx**2, dtype=np.complex128),
         eps_yy=np.ascontiguousarray(cs.ny**2, dtype=np.complex128),
         eps_zz=np.ascontiguousarray(cs.nz**2, dtype=np.complex128),
