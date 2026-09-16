@@ -5,6 +5,9 @@ from __future__ import annotations
 from meow.fde.default import (
     compute_modes,
 )
+from meow.fde.eigenlight import (
+    compute_modes_eigenlight,
+)
 from meow.fde.lumerical import (
     Sim,
     compute_modes_lumerical,
@@ -27,6 +30,7 @@ from meow.fde.tidy3d import (
 __all__ = [
     "Sim",
     "compute_modes",
+    "compute_modes_eigenlight",
     "compute_modes_lumerical",
     "compute_modes_meep",
     "compute_modes_tidy3d",

@@ -81,6 +81,7 @@ from meow.environment import (
 from meow.fde import (
     Sim,
     compute_modes,
+    compute_modes_eigenlight,
     compute_modes_lumerical,
     compute_modes_meep,
     compute_modes_tidy3d,
@@ -214,6 +215,7 @@ __all__ = [
     "compute_interface_s_matrix",
     "compute_mode_amplitudes",
     "compute_modes",
+    "compute_modes_eigenlight",
     "compute_modes_lumerical",
     "compute_modes_meep",
     "compute_modes_tidy3d",
