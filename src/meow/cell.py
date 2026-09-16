@@ -103,13 +103,16 @@ class Cell(BaseModel):
         if cbar:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad=0.05)
+            labels = ["vacuum"]
+            ticks = [0.5]
+            for material, index in self.materials.items():
+                labels.append(material.name)
+                ticks.append(index + 0.5)
+
             _cbar = plt.colorbar(
-                ticks=np.concatenate(
-                    [np.unique(self.m_full) + 0.5, [len(self.materials) + 1.5]]
-                ),
+                ticks=ticks,
                 cax=cax,
             )
-            labels = [""] + [m.name for m in self.materials] + [""]
             _cbar.ax.set_yticklabels(labels, rotation=90, va="center")
             plt.sca(ax)
         if show:
