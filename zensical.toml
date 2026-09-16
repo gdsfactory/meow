@@ -10,18 +10,18 @@ extra_javascript = [
   "https://unpkg.com/katex@0/dist/contrib/auto-render.min.js"
 ]
 nav = [
-  {"home" = "index.md"},
-  {"quickstart" = "nbs/00_introduction.md"},
-  {"examples" = [
-    {"from gds" = "nbs/01_gds_taper.md"},
-    {"taper length sweep" = "nbs/02_taper_length_sweep.md"},
-    {"different modes" = "nbs/03_unequal_number_of_modes.md"},
-    {"rib interface" = "nbs/04_rib_interface.md"},
-    {"mode propagation" = "nbs/05_propagate_modes.md"}
-  ]},
-  {"algorithm" = "algorithm.md"},
-  {"api" = "api.md"},
-  {"changelog" = "changelog.md"}
+  { "home" = "index.md" },
+  { "quickstart" = "nbs/00_introduction.md" },
+  { "examples" = [
+    { "from gds" = "nbs/01_gds_taper.md" },
+    { "taper length sweep" = "nbs/02_taper_length_sweep.md" },
+    { "different modes" = "nbs/03_unequal_number_of_modes.md" },
+    { "rib interface" = "nbs/04_rib_interface.md" },
+    { "mode propagation" = "nbs/05_propagate_modes.md" }
+  ] },
+  { "algorithm" = "algorithm.md" },
+  { "api" = "api.md" },
+  { "changelog" = "changelog.md" }
 ]
 repo_name = "gdsfactory/meow"
 repo_url = "https://github.com/gdsfactory/meow"
