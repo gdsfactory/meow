@@ -31,7 +31,7 @@ dev = [
 ]
 
 [project]
-authors = [{name = "Floris Laporte", email = "floris.laporte@gmail.com"}]
+authors = [{ name = "Floris Laporte", email = "floris.laporte@gmail.com" }]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -67,14 +67,14 @@ keywords = [
   "photonics",
   "waveguides"
 ]
-license = {text = "Apache Software License"}
+license = { text = "Apache Software License" }
 name = "meow-sim"
-readme = "README.md"
-requires-python = ">=3.11"
-version = "0.15.0"
 optional-dependencies.eigenlight = [
   "eigenlight==0.0.1; implementation_name == 'cpython' and python_version == '3.12'"
 ]
+readme = "README.md"
+requires-python = ">=3.11"
+version = "0.15.0"
 
 [[tool.bver.file]]
 src = "README.md"
