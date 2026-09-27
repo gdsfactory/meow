@@ -13,6 +13,7 @@ TEST_DIR = Path(__file__).resolve().parent
 NBS_DIR = TEST_DIR / "nbs"
 EXAMPLES_DIR = TEST_DIR.parent / "nbs"
 NBS_FAIL_DIR = TEST_DIR / "failed"
+MMI_DESIGN_NOTEBOOK = TEST_DIR.parents[1] / "notebooks" / "06_mmi_1x2_design.ipynb"
 
 shutil.rmtree(NBS_FAIL_DIR, ignore_errors=True)
 NBS_FAIL_DIR.mkdir(exist_ok=True)
@@ -30,6 +31,7 @@ def _find_notebooks(folder: Path) -> Generator[Path, None, None]:
 TEST_NOTEBOOKS = [
     *sorted(_find_notebooks(NBS_DIR)),
     *sorted(_find_notebooks(EXAMPLES_DIR)),
+    MMI_DESIGN_NOTEBOOK,
 ]
 
 
