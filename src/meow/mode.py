@@ -12,7 +12,7 @@ from typing import Any, Literal, TypeAlias, cast
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import colors
-from matplotlib.typing import ColorType
+from matplotlib.axes import Axes
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pydantic import Field
 from scipy.constants import epsilon_0 as eps0
@@ -119,14 +119,14 @@ class Mode(BaseModel):
         ax: Any = None,
         show: bool = True,
         draw_refractive_index: bool | None = None,
-        refractive_index_cmap: str | colors.LinearSegmentedColormap | None = None,
+        n_cmap: str | colors.LinearSegmentedColormap | None = None,
         draw_mode_contours: bool = True,
         mode_cmap: str = "inferno",
-        num_contour_levels: int = 8,
+        num_levels: int = 8,
         draw_mode_image: bool = False,
         mode_image_alpha: float = 0.6,
         draw_structure_boundaries: bool = False,
-        structure_boundaries_color: ColorType = "black",
+        structure_boundaries_color: str | tuple[float, ...] = "black",
         **_: Any,
     ) -> None:
         """Visualization function for Mode. There are several visualization options.
@@ -149,13 +149,13 @@ class Mode(BaseModel):
                 refractive index profile below the mode (equivalent to visualizing
                 the mode's CrossSection underneath the mode). Defaults to None, in
                 which case it becomes True iff draw_mode_image is False.
-            refractive_index_cmap (str | colors.LinearSegmentedColormap | None):
+            n_cmap (str | colors.LinearSegmentedColormap | None):
                 Maps refractive index to color. Defaults to None.
             draw_mode_contours (bool, optional): Whether to draw mode contours.
                 Defaults to True.
             mode_cmap (str, optional): Colormap for the mode, used for both the mode
                 image and the mode contours. Defaults to "inferno".
-            num_contour_levels (int, optional): Number of contour levels for mode
+            num_levels (int, optional): Number of contour levels for mode
                 contours. Defaults to 8.
             draw_mode_image (bool, optional): Whether to draw the mode as an image.
                 Defaults to False.
@@ -163,10 +163,18 @@ class Mode(BaseModel):
                 Defaults to 0.6.
             draw_structure_boundaries (bool, optional): Whether to draw lines around
                 structure boundaries. Defaults to False.
-            structure_boundaries_color (ColorType, optional): Structure boundaries
-                color. Defaults to "black".
+            structure_boundaries_color (str | tuple[float, ...], optional):
+                Structure boundaries color. Defaults to "black".
         """
         from meow.visualization import _figsize_visualize_mode
+
+        if not (draw_mode_image or draw_mode_contours):
+            msg = (
+                "Nothing to visualize for the mode: at least one of "
+                "draw_mode_image or draw_mode_contours must be True. "
+                "To plot only the cross section, visualize mode.cs instead."
+            )
+            raise ValueError(msg)
 
         # by default, draw refractive index if not drawing mode
         if draw_refractive_index is None:
@@ -184,6 +192,7 @@ class Mode(BaseModel):
                 W, H = _figsize_visualize_mode(self.cs, 6.4 * max_width / current_width)
             if ax is None:
                 _fig, ax = plt.subplots(1, len(fields), figsize=(len(fields) * W, H))
+            ax = _flatten_axes(ax)
             if len(ax) < len(fields):
                 msg = (
                     f"Not enough axes supplied for the number of fields "
@@ -197,10 +206,10 @@ class Mode(BaseModel):
                     fields=(field,),
                     ax=ax_,
                     draw_refractive_index=draw_refractive_index,
-                    refractive_index_cmap=refractive_index_cmap,
+                    n_cmap=n_cmap,
                     draw_mode_contours=draw_mode_contours,
                     mode_cmap=mode_cmap,
-                    num_contour_levels=num_contour_levels,
+                    num_levels=num_levels,
                     draw_mode_image=draw_mode_image,
                     mode_image_alpha=mode_image_alpha,
                     draw_structure_boundaries=draw_structure_boundaries,
@@ -221,26 +230,23 @@ class Mode(BaseModel):
         if ax is None:
             ax = plt.gca()
         else:
-            # ax might be a list of axes, in which case take the first one
-            try:
-                if len(ax) > 0:
-                    ax = ax[0]
-            except TypeError:
-                # ax is not a list, do nothing
-                pass
+            # ax might be a (nested) list or array of axes; use the first one
+            axes = _flatten_axes(ax)
+            if not axes:
+                msg = "Empty sequence of axes supplied."
+                raise ValueError(msg)
+            ax = axes[0]
         plt.sca(ax)
 
         # first, draw cross section
 
         if draw_refractive_index:
-            if refractive_index_cmap is None:
+            if n_cmap is None:
                 # little bit lighter colored than the one in cs._visualize:
-                refractive_index_cmap = colors.LinearSegmentedColormap.from_list(
+                n_cmap = colors.LinearSegmentedColormap.from_list(
                     name="c_cmap", colors=["#ffffff", "#c1d9ed"]
                 )
-            self.cs._visualize(
-                ax=ax, n_cmap=refractive_index_cmap, cbar=False, show=False
-            )
+            self.cs._visualize(ax=ax, n_cmap=n_cmap, cbar=False, show=False)
 
         # draw structure boundaries
         if draw_structure_boundaries:
@@ -297,10 +303,11 @@ class Mode(BaseModel):
         mode = operation(getattr(self, field))
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning)
-            levels = np.linspace(mode.min(), mode.max(), num_contour_levels + 1)[1:]
+            levels = np.linspace(mode.min(), mode.max(), num_levels + 1)[1:]
 
+            mode_mappable = None
             if draw_mode_image:
-                plt.pcolormesh(
+                mode_mappable = plt.pcolormesh(
                     X,
                     Y,
                     mode,
@@ -311,7 +318,7 @@ class Mode(BaseModel):
                 )
 
             if draw_mode_contours:
-                plt.contour(
+                contours = plt.contour(
                     X,
                     Y,
                     mode,
@@ -319,12 +326,15 @@ class Mode(BaseModel):
                     levels=levels,
                     zorder=4,  # above mode image
                 )
+                if mode_mappable is None:
+                    mode_mappable = contours
 
-        # colorbar on right
+        # colorbar on right, explicitly for the mode (prefer the continuous image;
+        # it keeps the image's alpha so it matches what's drawn)
 
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
-        plt.colorbar(cax=cax)
+        plt.colorbar(mode_mappable, cax=cax)
         plt.sca(ax)
 
         # labels
@@ -426,6 +436,10 @@ Modes: TypeAlias = list[Mode]
 def zero_phase(mode: Mode) -> Mode:
     """Normalize (zero out) the phase of a `Mode`.
 
+    The phase is chosen such that the dominant electric field component (the
+    largest of Ex, Ey, Ez at the energy density maximum) is real and positive
+    there.
+
     Args:
         mode: the mode to normalize the phase of.
 
@@ -434,7 +448,8 @@ def zero_phase(mode: Mode) -> Mode:
     """
     e = np.abs(energy_density(mode))
     m, n = np.array(np.where(e == e.max()))[:, 0]
-    phase = np.exp(-1j * np.angle(np.array(mode.Hx))[m][n])
+    field_component = max(("Ex", "Ey", "Ez"), key=lambda c: abs(getattr(mode, c)[m, n]))
+    phase = np.exp(-1j * np.angle(getattr(mode, field_component)[m, n]))
     new_mode = Mode(
         neff=mode.neff,
         cs=mode.cs,
@@ -445,7 +460,7 @@ def zero_phase(mode: Mode) -> Mode:
         Hy=mode.Hy * phase,
         Hz=mode.Hz * phase,
     )
-    if _sum_around(np.real(new_mode.Ex), int(m), int(n)) < 0:
+    if _sum_around(np.real(getattr(new_mode, field_component)), int(m), int(n)) < 0:
         new_mode = invert_mode(new_mode)
     return new_mode
 
@@ -875,3 +890,19 @@ def _interpolate_Hz(mode: Mode) -> Mode:
         Hz=mode.Hz,
         interpolation="Hz",
     )
+
+
+def _flatten_axes(ax: Any) -> list[Axes]:
+    """Flatten an Axes or a (nested) list/array of Axes into a flat list.
+
+    This is used because plt.subplots(...) can return a single Axes or a nested array
+    of Axes.
+    """
+    if isinstance(ax, Axes):
+        return [ax]
+    flat = list(np.ravel(np.asarray(ax, dtype=object)))
+    for a in flat:
+        if not isinstance(a, Axes):
+            msg = f"Expected matplotlib Axes, got {type(a).__name__}."
+            raise TypeError(msg)
+    return flat

@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sax
 from matplotlib import colors
-from matplotlib.typing import ColorType
 from trimesh.scene import Scene
 from trimesh.transformations import rotation_matrix
 
@@ -147,9 +146,9 @@ def _visualize_overlap_density(
         title=f"mode 1: {field}",
         fields=(field,),
         ax=ax[0],
-        refractive_index_cmap=n_cmap,
+        n_cmap=n_cmap,
         mode_cmap=mode_cmap,
-        num_contour_levels=num_levels,
+        num_levels=num_levels,
         show=False,
     )
 
@@ -158,9 +157,9 @@ def _visualize_overlap_density(
         title=f"mode 2: {field}",
         fields=(field,),
         ax=ax[1],
-        refractive_index_cmap=n_cmap,
+        n_cmap=n_cmap,
         mode_cmap=mode_cmap,
-        num_contour_levels=num_levels,
+        num_levels=num_levels,
         show=False,
     )
 
@@ -169,9 +168,9 @@ def _visualize_overlap_density(
         title=title,
         fields=("Ex",),
         ax=ax[2],
-        refractive_index_cmap=n_cmap,
+        n_cmap=n_cmap,
         mode_cmap=mode_cmap,
-        num_contour_levels=num_levels,
+        num_levels=num_levels,
         show=False,
     )
 
@@ -216,14 +215,14 @@ def _visualize_modes(
     ax: Any = None,
     show: bool = True,
     draw_refractive_index: bool | None = None,
-    refractive_index_cmap: str | colors.LinearSegmentedColormap | None = None,
+    n_cmap: str | colors.LinearSegmentedColormap | None = None,
     draw_mode_contours: bool = True,
     mode_cmap: str = "inferno",
-    num_contour_levels: int = 8,
+    num_levels: int = 8,
     draw_mode_image: bool = False,
     mode_image_alpha: float = 0.6,
     draw_structure_boundaries: bool = False,
-    structure_boundaries_color: ColorType = "black",
+    structure_boundaries_color: str | tuple[float, ...] = "black",
     plot_width: float = 6.4,
 ) -> None:
     num_modes = len(modes)
@@ -238,7 +237,7 @@ def _visualize_modes(
             sharex=True,
             sharey=True,
             squeeze=False,
-            layout="constrained",
+            constrained_layout=True,
         )
     else:
         _fig = None
@@ -251,10 +250,10 @@ def _visualize_modes(
             ax=ax[i],
             show=False,
             draw_refractive_index=draw_refractive_index,
-            refractive_index_cmap=refractive_index_cmap,
+            n_cmap=n_cmap,
             draw_mode_contours=draw_mode_contours,
             mode_cmap=mode_cmap,
-            num_contour_levels=num_contour_levels,
+            num_levels=num_levels,
             draw_mode_image=draw_mode_image,
             mode_image_alpha=mode_image_alpha,
             draw_structure_boundaries=draw_structure_boundaries,

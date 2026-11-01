@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
@@ -26,7 +28,22 @@ test_cell = mw.Cell(
 )
 test_xsec = mw.CrossSection.from_cell(cell=test_cell, env=mw.Environment(wl=1.55, T=20))
 
-test_modes = mw.compute_modes(cs=test_xsec, num_modes=3)
+
+def _compute_modes_for_test() -> list[mw.Mode]:
+    return mw.compute_modes(cs=test_xsec, num_modes=3)
+
+
+@pytest.fixture(scope="module")
+def modes_for_test() -> list[mw.Mode]:
+    """Computed once per module, only if a selected test requests it."""
+    return _compute_modes_for_test()
+
+
+@pytest.fixture(autouse=True)
+def _close_figures() -> Iterator[None]:
+    """Close all figures after each test so tests don't draw on each other's."""
+    yield
+    plt.close("all")
 
 
 def test_cell_visualization_no_vacuum():
@@ -176,6 +193,7 @@ def test_cross_section_visualization_anisotropic():
     ],
 )
 def test_mode_visualization(
+    modes_for_test: list[mw.Mode],
     fields: list[str],
     *,
     draw_refractive_index: bool,
@@ -194,7 +212,7 @@ def test_mode_visualization(
     """
 
     mw.visualize(
-        test_modes[0],
+        modes_for_test[0],
         fields=fields,
         draw_refractive_index=draw_refractive_index,
         draw_mode_contours=draw_mode_contours,
@@ -214,11 +232,11 @@ def test_mode_visualization(
         (["Ex", "Hx", "Pz"]),
     ],
 )
-def test_multiple_modes_visualization(fields: list[str]):
+def test_multiple_modes_visualization(modes_for_test: list[mw.Mode], fields: list[str]):
     """Test that multiple modes visualization succeeds for various arguments."""
 
     mw.visualize(
-        test_modes,
+        modes_for_test,
         fields=fields,
         draw_refractive_index=True,
         draw_mode_contours=True,
@@ -365,17 +383,19 @@ def test_mode_draw_structure_boundaries():
 
 if __name__ == "__main__":
     show = True  # show figures if running from command line
+    modes = _compute_modes_for_test()
 
     # run tests with a subset of parameter values
     test_cell_visualization_no_vacuum()
     test_cell_visualization_zero_thickness()
     test_cross_section_visualization_anisotropic()
     test_mode_visualization(
+        modes,
         fields=["Ex", "Hx", "Pz"],
         draw_refractive_index=True,
         draw_mode_contours=False,
         draw_mode_image=True,
         draw_structure_boundaries=False,
     )
-    test_multiple_modes_visualization(fields=["Ex", "Hx", "Pz"])
+    test_multiple_modes_visualization(modes, fields=["Ex", "Hx", "Pz"])
     test_mode_draw_structure_boundaries()
