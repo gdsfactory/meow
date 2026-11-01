@@ -10,6 +10,8 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import sax
+from matplotlib import colors
+from matplotlib.typing import ColorType
 from trimesh.scene import Scene
 from trimesh.transformations import rotation_matrix
 
@@ -112,7 +114,7 @@ def _visualize_overlap_density(
     y_symmetry: bool = False,
     ax: Any = None,
     n_cmap: str | None = None,
-    mode_cmap: str | None = None,
+    mode_cmap: str = "inferno",
     num_levels: int = 8,
     show: bool = True,
 ) -> None:
@@ -146,7 +148,7 @@ def _visualize_overlap_density(
         fields=(field,),
         ax=ax[0],
         refractive_index_cmap=n_cmap,
-        mode_contours_cmap=mode_cmap,
+        mode_cmap=mode_cmap,
         num_contour_levels=num_levels,
         show=False,
     )
@@ -157,7 +159,7 @@ def _visualize_overlap_density(
         fields=(field,),
         ax=ax[1],
         refractive_index_cmap=n_cmap,
-        mode_contours_cmap=mode_cmap,
+        mode_cmap=mode_cmap,
         num_contour_levels=num_levels,
         show=False,
     )
@@ -168,7 +170,7 @@ def _visualize_overlap_density(
         fields=("Ex",),
         ax=ax[2],
         refractive_index_cmap=n_cmap,
-        mode_contours_cmap=mode_cmap,
+        mode_cmap=mode_cmap,
         num_contour_levels=num_levels,
         show=False,
     )
@@ -207,44 +209,57 @@ def _power(amp: np.ndarray) -> np.ndarray:
 def _visualize_modes(
     modes: list[Mode],
     *,
-    n_cmap: str | None = None,
-    mode_cmap: str | None = None,
-    num_levels: int = 8,
-    operation: Callable = _power,
-    show: bool = True,
-    plot_width: float = 6.4,
+    title: str | None = None,
+    title_prefix: str = "",
     fields: tuple[str, ...] = ("Ex", "Hx"),
+    operation: Callable = _power,
     ax: Any = None,
+    show: bool = True,
+    draw_refractive_index: bool | None = None,
+    refractive_index_cmap: str | colors.LinearSegmentedColormap | None = None,
+    draw_mode_contours: bool = True,
+    mode_cmap: str = "inferno",
+    num_contour_levels: int = 8,
+    draw_mode_image: bool = False,
+    mode_image_alpha: float = 0.6,
+    draw_structure_boundaries: bool = False,
+    structure_boundaries_color: ColorType = "black",
+    plot_width: float = 6.4,
 ) -> None:
     num_modes = len(modes)
     cs = modes[0].cs
     W, H = _figsize_visualize_mode(cs, plot_width)
 
     if ax is None:
-        fig, ax = plt.subplots(
+        _fig, ax = plt.subplots(
             num_modes,
-            2,
-            figsize=(2 * W, num_modes * H),
+            len(fields),
+            figsize=(len(fields) * W, num_modes * H),
             sharex=True,
             sharey=True,
             squeeze=False,
+            layout="constrained",
         )
     else:
-        fig = None
+        _fig = None
     for i, m in enumerate(modes):
         m._visualize(
-            title=None,
-            title_prefix=f"m{i}: ",
+            title=title,
+            title_prefix=title_prefix or f"m{i}: ",
             fields=tuple(fields),
-            ax=ax[i],
-            refractive_index_cmap=n_cmap,
-            mode_contours_cmap=mode_cmap,
-            num_contour_levels=num_levels,
             operation=operation,
+            ax=ax[i],
             show=False,
+            draw_refractive_index=draw_refractive_index,
+            refractive_index_cmap=refractive_index_cmap,
+            draw_mode_contours=draw_mode_contours,
+            mode_cmap=mode_cmap,
+            num_contour_levels=num_contour_levels,
+            draw_mode_image=draw_mode_image,
+            mode_image_alpha=mode_image_alpha,
+            draw_structure_boundaries=draw_structure_boundaries,
+            structure_boundaries_color=structure_boundaries_color,
         )
-    if fig is not None:
-        fig.subplots_adjust(hspace=0, wspace=2 / (2 * W))
     if show:
         plt.show()
 
