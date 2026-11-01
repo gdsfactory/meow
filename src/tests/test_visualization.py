@@ -107,10 +107,10 @@ def test_cell_visualization_zero_thickness():
 def test_cross_section_visualization_anisotropic():
     """Test cross section visualization for anisotropic materials.
 
-
-    Make a cross section with some anisotopic material (tidy3d LiNbO3)
+    Make a cross section with some anisotropic material (tidy3d LiNbO3)
     and test that visualize called with index_component='x' or 'y' or 'z'
-    results in top of refractive index legend changing according to the component."""
+    results in top of refractive index legend changing according to the component.
+    """
 
     for optical_axis in ["x", "y", "z"]:
         ln = mw.TidyMaterial(
@@ -208,7 +208,7 @@ def test_mode_visualization(
     - draw_refractive_index True/False
     - draw_mode_contours True/False
     - draw_mode_image True/False
-    - draw_structure_boudaries True/False
+    - draw_structure_boundaries True/False
     """
 
     mw.visualize(
@@ -252,7 +252,7 @@ def test_mode_draw_structure_boundaries():
     """Test drawing structures inside and outside the mesh and ensure they appear"""
 
     # color that doesn't appear elsewhere in the plot so we can
-    # programmatically determine whether structure is drawn
+    # programmatically determine whether structure boundary is drawn
     structure_color = "#FF69B4"
     structure_color_rgb = np.array(
         [
@@ -324,16 +324,16 @@ def test_mode_draw_structure_boundaries():
     # test that plot boundaries are correct, as plotting structure boundaries
     # outside plot can mess things up if you're not careful
     # with some tolerance because the limits get changed to min and max of mesh
-    assert np.isclose(ax.get_xlim()[0], -2, atol=0.1), (
+    assert np.isclose(ax.get_xlim()[0], -2, atol=0.05), (
         f"{ax.get_xlim()[0] = }, should be near -2"
     )
-    assert np.isclose(ax.get_xlim()[1], 0, atol=0.1), (
+    assert np.isclose(ax.get_xlim()[1], 0, atol=0.05), (
         f"{ax.get_xlim()[1] = }, should be near 0"
     )
-    assert np.isclose(ax.get_ylim()[0], -2, atol=0.1), (
+    assert np.isclose(ax.get_ylim()[0], -2, atol=0.05), (
         f"{ax.get_ylim()[0] = }, should be near -2"
     )
-    assert np.isclose(ax.get_ylim()[1], 0, atol=0.1), (
+    assert np.isclose(ax.get_ylim()[1], 0, atol=0.05), (
         f"{ax.get_ylim()[1] = }, should be near 0"
     )
 
@@ -367,16 +367,16 @@ def test_mode_draw_structure_boundaries():
     # test that plot boundaries are correct, as plotting structure boundaries
     # outside plot can mess things up if you're not careful
     # with some tolerance because the limits get changed to min and max of mesh
-    assert np.isclose(ax.get_xlim()[0], 2, atol=0.1), (
+    assert np.isclose(ax.get_xlim()[0], 2, atol=0.05), (
         f"{ax.get_xlim()[0] = }, should be near 2"
     )
-    assert np.isclose(ax.get_xlim()[1], 3, atol=0.1), (
+    assert np.isclose(ax.get_xlim()[1], 3, atol=0.05), (
         f"{ax.get_xlim()[1] = }, should be near 3"
     )
-    assert np.isclose(ax.get_ylim()[0], 2, atol=0.1), (
+    assert np.isclose(ax.get_ylim()[0], 2, atol=0.05), (
         f"{ax.get_ylim()[0] = }, should be near 2"
     )
-    assert np.isclose(ax.get_ylim()[1], 3, atol=0.1), (
+    assert np.isclose(ax.get_ylim()[1], 3, atol=0.05), (
         f"{ax.get_ylim()[1] = }, should be near 3"
     )
 

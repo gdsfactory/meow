@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import colors
 from matplotlib.axes import Axes
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pydantic import Field
 from scipy.constants import epsilon_0 as eps0
 from scipy.constants import mu_0 as mu0
@@ -22,7 +21,6 @@ from meow.arrays import Complex, ComplexArray2D, FloatArray2D
 from meow.base_model import BaseModel, cached_property
 from meow.cross_section import CrossSection
 from meow.environment import Environment
-from meow.geometries import Polygon2D, Rectangle
 from meow.mesh import Mesh2D
 
 
@@ -109,15 +107,77 @@ class Mode(BaseModel):
         """The mesh of the mode."""
         return self.cs.mesh
 
-    def _visualize(  # noqa: PLR0915
+    def _visualize(
         self,
         *,
-        title: str | None = None,
-        title_prefix: str = "",
         fields: tuple[str, ...] = ("Ex",),
-        operation: Callable = _power,
         ax: Any = None,
         show: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        """Visualization function for Mode, drawing one plot per field.
+
+        Args:
+            fields (tuple[str, ...], optional): Tuple of field components to
+                visualize. Can be "<E or H or P><x or y or z>. Defaults to ("Ex",).
+            ax (Any, optional): Matplotlib axes to draw on: a single Axes, or a
+                (nested) list or array of Axes with at least one per field.
+                Defaults to None, in which case new axes are made.
+            show (bool, optional): Whether to display the plot immediately.
+                Defaults to True.
+            **kwargs: Visualization options forwarded to `Mode._visualize_field`
+                (title, operation, draw_mode_image, ...); see there.
+        """
+        from meow.visualization import _figsize_visualize_mode
+
+        if not fields:
+            fields = ("Ex",)
+
+        if len(fields) == 1:
+            if ax is None:
+                ax = plt.gca()
+            else:
+                # ax might be a (nested) list or array of axes; use the first one
+                axes = _flatten_axes(ax)
+                if not axes:
+                    msg = "Empty sequence of axes supplied."
+                    raise ValueError(msg)
+                ax = axes[0]
+            self._visualize_field(fields[0], ax=ax, **kwargs)
+        else:
+            W, H = _figsize_visualize_mode(self.cs, 6.4)
+            if len(fields) > 2:
+                max_width = 15
+                current_width = len(fields) * W
+                W, H = _figsize_visualize_mode(self.cs, 6.4 * max_width / current_width)
+            if ax is None:
+                _fig, ax = plt.subplots(
+                    1,
+                    len(fields),
+                    figsize=(len(fields) * W, H),
+                    constrained_layout=True,
+                )
+            axes = _flatten_axes(ax)
+            if len(axes) < len(fields):
+                msg = (
+                    f"Not enough axes supplied for the number of fields "
+                    f"to plot! {len(axes)} < {len(fields)}."
+                )
+                raise ValueError(msg)
+            for field, ax_ in zip(fields, axes, strict=False):
+                self._visualize_field(field, ax=ax_, **kwargs)
+
+        if show:
+            plt.show()
+
+    def _visualize_field(
+        self,
+        field: str,
+        *,
+        ax: Axes,
+        title: str | None = None,
+        title_prefix: str = "",
+        operation: Callable = _power,
         draw_refractive_index: bool | None = None,
         n_cmap: str | colors.LinearSegmentedColormap | None = None,
         draw_mode_contours: bool = True,
@@ -129,22 +189,18 @@ class Mode(BaseModel):
         structure_boundaries_color: str | tuple[float, ...] = "black",
         **_: Any,
     ) -> None:
-        """Visualization function for Mode. There are several visualization options.
+        """Draw a single field component of the mode on the given axes.
 
         Args:
+            field (str): Field component to draw: "<E or H or P><x or y or z>".
+            ax (Axes): Matplotlib axes to draw on.
             title (str | None, optional): Title for plot image. Defaults to None, in
                 which case title is generated using field plotted and effective
                 index.
             title_prefix (str, optional): Prefix to put before the automatic title
                 (or manual title if specified). Defaults to "".
-            fields (tuple[str, ...], optional): Tuple of field components to
-                visualize. Can be "<E or H or P><x or y or z>. Defaults to ("Ex",).
             operation (Callable, optional): Vectorized function to apply to mode
                 field. Defaults to |...|^2.
-            ax (Any, optional): Matplotlib axis to draw on. Defaults to None, in
-                which case new axes are made.
-            show (bool, optional): Whether to display the plot immediately.
-                Defaults to True.
             draw_refractive_index (bool | None, optional): Whether to draw the
                 refractive index profile below the mode (equivalent to visualizing
                 the mode's CrossSection underneath the mode). Defaults to None, in
@@ -166,8 +222,6 @@ class Mode(BaseModel):
             structure_boundaries_color (str | tuple[float, ...], optional):
                 Structure boundaries color. Defaults to "black".
         """
-        from meow.visualization import _figsize_visualize_mode
-
         if not (draw_mode_image or draw_mode_contours):
             msg = (
                 "Nothing to visualize for the mode: at least one of "
@@ -180,62 +234,11 @@ class Mode(BaseModel):
         if draw_refractive_index is None:
             draw_refractive_index = not draw_mode_image
 
-        W, H = _figsize_visualize_mode(self.cs, 6.4)
-
-        if not fields:
-            fields = ("Ex",)
-
-        if len(fields) > 1:
-            if len(fields) > 2:
-                max_width = 15
-                current_width = len(fields) * W
-                W, H = _figsize_visualize_mode(self.cs, 6.4 * max_width / current_width)
-            if ax is None:
-                _fig, ax = plt.subplots(1, len(fields), figsize=(len(fields) * W, H))
-            ax = _flatten_axes(ax)
-            if len(ax) < len(fields):
-                msg = (
-                    f"Not enough axes supplied for the number of fields "
-                    f"to plot! {len(ax)} < {len(fields)}."
-                )
-                raise ValueError(msg)
-            for field, ax_ in zip(fields, ax, strict=False):
-                self._visualize(
-                    title=title,
-                    title_prefix=title_prefix,
-                    fields=(field,),
-                    ax=ax_,
-                    draw_refractive_index=draw_refractive_index,
-                    n_cmap=n_cmap,
-                    draw_mode_contours=draw_mode_contours,
-                    mode_cmap=mode_cmap,
-                    num_levels=num_levels,
-                    draw_mode_image=draw_mode_image,
-                    mode_image_alpha=mode_image_alpha,
-                    draw_structure_boundaries=draw_structure_boundaries,
-                    structure_boundaries_color=structure_boundaries_color,
-                    operation=operation,
-                    show=False,
-                )
-            if show:
-                plt.show()
-            return
-
-        field = "Ex" if not fields else fields[0]
         valid_fields = ["Ex", "Ey", "Ez", "Hx", "Hy", "Hz", "Px", "Py", "Pz"]
         if field not in valid_fields:
             msg = f"Invalid field {field!r}. Valid fields: {', '.join(valid_fields)}."
             raise ValueError(msg)
 
-        if ax is None:
-            ax = plt.gca()
-        else:
-            # ax might be a (nested) list or array of axes; use the first one
-            axes = _flatten_axes(ax)
-            if not axes:
-                msg = "Empty sequence of axes supplied."
-                raise ValueError(msg)
-            ax = axes[0]
         plt.sca(ax)
 
         # first, draw cross section
@@ -251,38 +254,8 @@ class Mode(BaseModel):
         # draw structure boundaries
         if draw_structure_boundaries:
             for structure2d in self.cs.structures:
-                geometry2d = structure2d.geometry
-                if isinstance(geometry2d, Polygon2D):
-                    polygon_x = np.append(geometry2d.poly[:, 0], geometry2d.poly[0, 0])
-                    polygon_y = np.append(geometry2d.poly[:, 1], geometry2d.poly[0, 1])
-                    plt.plot(
-                        polygon_x,
-                        polygon_y,
-                        color=structure_boundaries_color,
-                        linewidth=1,
-                    )
-                elif isinstance(geometry2d, Rectangle):
-                    plt.plot(
-                        [
-                            geometry2d.x_max,
-                            geometry2d.x_min,
-                            geometry2d.x_min,
-                            geometry2d.x_max,
-                            geometry2d.x_max,
-                        ],
-                        [
-                            geometry2d.y_max,
-                            geometry2d.y_max,
-                            geometry2d.y_min,
-                            geometry2d.y_min,
-                            geometry2d.y_max,
-                        ],
-                        color=structure_boundaries_color,
-                        linewidth=1,
-                    )
-                else:
-                    msg = f"Unsupported geometry type: {type(geometry2d)}"
-                    raise NotImplementedError(msg)
+                boundary = structure2d.geometry._shapely_polygon().exterior
+                plt.plot(*boundary.xy, color=structure_boundaries_color, linewidth=1)
 
         # plot mode image then contours
 
@@ -330,11 +303,13 @@ class Mode(BaseModel):
                     mode_mappable = contours
 
         # colorbar on right, explicitly for the mode (prefer the continuous image;
-        # it keeps the image's alpha so it matches what's drawn)
+        # it keeps the image's alpha so it matches what's drawn). Passing ax= lets
+        # the figure's layout engine (e.g. constrained layout) reserve its space.
 
-        divider = make_axes_locatable(ax)
-        cax = divider.append_axes("right", size="5%", pad=0.05)
-        plt.colorbar(mode_mappable, cax=cax)
+        if mode_mappable is None:  # unreachable: checked at the top of the method
+            msg = "No mode image or contours were drawn."
+            raise RuntimeError(msg)
+        ax.figure.colorbar(mode_mappable, ax=ax, fraction=0.05, pad=0.02)
         plt.sca(ax)
 
         # labels
@@ -350,8 +325,6 @@ class Mode(BaseModel):
         plt.axis("scaled")
         plt.xlim(X.min(), X.max())
         plt.ylim(Y.min(), Y.max())
-        if show:
-            plt.show()
 
     def save(self, filename: str | Path) -> None:
         """Save the mode to a file."""

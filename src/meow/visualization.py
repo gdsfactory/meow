@@ -10,7 +10,6 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import sax
-from matplotlib import colors
 from trimesh.scene import Scene
 from trimesh.transformations import rotation_matrix
 
@@ -197,7 +196,8 @@ def _figsize_visualize_mode(cs: CrossSection, W0: float) -> tuple[float, float]:
     delta_x = x_max - x_min
     delta_y = y_max - y_min
     aspect = delta_y / delta_x
-    W, H = W0 + 1, W0 * aspect + 1
+    # extra width for y labels + colorbar, extra height for title + x labels
+    W, H = W0 + 1.4, W0 * aspect + 0.7
     return W, H
 
 
@@ -208,23 +208,18 @@ def _power(amp: np.ndarray) -> np.ndarray:
 def _visualize_modes(
     modes: list[Mode],
     *,
-    title: str | None = None,
     title_prefix: str = "",
     fields: tuple[str, ...] = ("Ex", "Hx"),
-    operation: Callable = _power,
     ax: Any = None,
     show: bool = True,
-    draw_refractive_index: bool | None = None,
-    n_cmap: str | colors.LinearSegmentedColormap | None = None,
-    draw_mode_contours: bool = True,
-    mode_cmap: str = "inferno",
-    num_levels: int = 8,
-    draw_mode_image: bool = False,
-    mode_image_alpha: float = 0.6,
-    draw_structure_boundaries: bool = False,
-    structure_boundaries_color: str | tuple[float, ...] = "black",
     plot_width: float = 6.4,
+    **kwargs: Any,
 ) -> None:
+    """Visualize a list of modes, one row per mode and one column per field.
+
+    Any other keyword arguments (e.g. title, operation, draw_mode_image) are
+    forwarded to `Mode._visualize`; see there for the available options.
+    """
     num_modes = len(modes)
     cs = modes[0].cs
     W, H = _figsize_visualize_mode(cs, plot_width)
@@ -243,21 +238,11 @@ def _visualize_modes(
         _fig = None
     for i, m in enumerate(modes):
         m._visualize(
-            title=title,
+            **kwargs,
             title_prefix=title_prefix or f"m{i}: ",
             fields=tuple(fields),
-            operation=operation,
             ax=ax[i],
             show=False,
-            draw_refractive_index=draw_refractive_index,
-            n_cmap=n_cmap,
-            draw_mode_contours=draw_mode_contours,
-            mode_cmap=mode_cmap,
-            num_levels=num_levels,
-            draw_mode_image=draw_mode_image,
-            mode_image_alpha=mode_image_alpha,
-            draw_structure_boundaries=draw_structure_boundaries,
-            structure_boundaries_color=structure_boundaries_color,
         )
     if show:
         plt.show()
