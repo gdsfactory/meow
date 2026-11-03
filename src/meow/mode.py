@@ -180,12 +180,12 @@ class Mode(BaseModel):
         operation: Callable = _power,
         draw_refractive_index: bool | None = None,
         n_cmap: str | colors.LinearSegmentedColormap | None = None,
-        draw_mode_contours: bool = True,
-        mode_cmap: str = "inferno",
+        draw_mode_contours: bool = False,
+        mode_cmap: str = "rainbow",
         num_levels: int = 8,
-        draw_mode_image: bool = False,
+        draw_mode_image: bool = True,
         mode_image_alpha: float = 0.6,
-        draw_structure_boundaries: bool = False,
+        draw_structure_boundaries: bool = True,
         structure_boundaries_color: str | tuple[float, ...] = "black",
         **_: Any,
     ) -> None:
@@ -210,7 +210,7 @@ class Mode(BaseModel):
             draw_mode_contours (bool, optional): Whether to draw mode contours.
                 Defaults to True.
             mode_cmap (str, optional): Colormap for the mode, used for both the mode
-                image and the mode contours. Defaults to "inferno".
+                image and the mode contours. Defaults to "rainbow".
             num_levels (int, optional): Number of contour levels for mode
                 contours. Defaults to 8.
             draw_mode_image (bool, optional): Whether to draw the mode as an image.
