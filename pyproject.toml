@@ -5,7 +5,7 @@ requires = ["setuptools>=61", "uv", "build", "wheel"]
 [dependency-groups]
 dev = [
   "build>=1.2.0",
-  "gdsfactory>=9.39",
+  "gdsfactory==10.0.0rc1",
   "gdspy>=1.6.13",
   "griffe>=1.5.6",
   "ipykernel>=6.29.5",
@@ -184,3 +184,6 @@ where = ["src"]
 
 [tool.ty.src]
 exclude = ["src/tests/**/*.ipynb"]
+
+[tool.uv.dependency-groups]
+dev = { requires-python = ">=3.12" }
