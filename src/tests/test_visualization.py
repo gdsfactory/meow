@@ -280,6 +280,8 @@ def test_mode_draw_structure_boundaries():
     mw.visualize(
         modes[0],
         fields=["Ex"],
+        draw_mode_contours=True,
+        draw_mode_image=False,
         draw_structure_boundaries=True,
         structure_boundaries_color=structure_color,
         ax=ax,
@@ -308,6 +310,8 @@ def test_mode_draw_structure_boundaries():
     mw.visualize(
         modes[0],
         fields=["Ex"],
+        draw_mode_contours=True,
+        draw_mode_image=False,
         draw_structure_boundaries=True,
         structure_boundaries_color=structure_color,
         ax=ax,
@@ -351,6 +355,8 @@ def test_mode_draw_structure_boundaries():
     mw.visualize(
         modes[0],
         fields=["Ex"],
+        draw_mode_contours=True,
+        draw_mode_image=False,
         draw_structure_boundaries=True,
         structure_boundaries_color=structure_color,
         ax=ax,

@@ -12,7 +12,7 @@ env = mw.Environment(T=20, wl=1.55)
 nx = 2
 ny = 3
 nz = 4
-test_anisotropic_material = mw.AnisotropicIndexMaterial(
+_test_anisotropic_material = mw.AnisotropicIndexMaterial(
     name="test_anisotropic_material",
     nx=nx,
     ny=ny,
@@ -46,7 +46,7 @@ def test_anisotropic_evanescent_coupler_matches_tidy3d():
 
     structures = [
         mw.Structure(  # left waveguide
-            material=test_anisotropic_material,
+            material=_test_anisotropic_material,
             geometry=mw.Box(
                 x_min=-waveguide_width - waveguide_gap / 2,
                 x_max=-waveguide_gap / 2,
@@ -58,7 +58,7 @@ def test_anisotropic_evanescent_coupler_matches_tidy3d():
             mesh_order=1,
         ),
         mw.Structure(  # right waveguide
-            material=test_anisotropic_material,
+            material=_test_anisotropic_material,
             geometry=mw.Box(
                 x_min=waveguide_gap / 2,
                 x_max=waveguide_gap / 2 + waveguide_width,
