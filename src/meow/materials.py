@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self, TypeAlias, cast
 
@@ -181,6 +182,64 @@ class TidyMaterial(MaterialBase):
                     raise ValueError(msg)
 
 
+class DispersionModelBase(BaseModel, ABC):
+    """A model returning a refractive index for a given `Environment`."""
+
+    @abstractmethod
+    def __call__(self, env: Environment) -> np.ndarray:
+        """Get the refractive index for the given environment."""
+
+
+class SellmeierModel(DispersionModelBase):
+    """Sellmeier dispersion: n^2 = A + sum_i B_i wl^2 / (wl^2 - C_i).
+
+    The wavelength is in micrometers (as in `Environment`), so the `C_i` are in
+    micrometers squared. The temperature of the environment is ignored.
+    """
+
+    B: tuple[float, ...] = Field(description="Sellmeier B coefficients (unitless)")
+    C: tuple[float, ...] = Field(description="Sellmeier C coefficients (um^2)")
+    A: float = Field(default=1.0, description="constant term of n^2")
+
+    @model_validator(mode="after")
+    def _validate_lengths(self) -> Self:
+        if len(self.B) != len(self.C):
+            msg = (
+                "B and C must have the same length. "
+                f"Got {len(self.B)} and {len(self.C)}."
+            )
+            raise ValueError(msg)
+        return self
+
+    def __call__(self, env: Environment) -> np.ndarray:
+        """Get the refractive index for the given environment."""
+        wl2 = np.asarray(env.wl, dtype=np.float64) ** 2
+        n2 = self.A + sum(
+            (b * wl2 / (wl2 - c) for b, c in zip(self.B, self.C, strict=True)),
+            start=np.zeros_like(wl2),
+        )
+        return np.squeeze(np.sqrt(np.asarray(n2, dtype=np.complex128)))
+
+
+class CauchyModel(DispersionModelBase):
+    """Cauchy dispersion: n = A + B / wl^2 + C / wl^4.
+
+    The wavelength is in micrometers (as in `Environment`), so B is in
+    micrometers squared and C in micrometers to the fourth. The temperature of the
+    environment is ignored.
+    """
+
+    A: float = Field(description="Cauchy A coefficient (unitless)")
+    B: float = Field(default=0.0, description="Cauchy B coefficient (um^2)")
+    C: float = Field(default=0.0, description="Cauchy C coefficient (um^4)")
+
+    def __call__(self, env: Environment) -> np.ndarray:
+        """Get the refractive index for the given environment."""
+        wl2 = np.asarray(env.wl, dtype=np.float64) ** 2
+        n = self.A + self.B / wl2 + self.C / wl2**2
+        return np.squeeze(np.asarray(n, dtype=np.complex128))
+
+
 class IndexMaterial(MaterialBase):
     """A material with a constant refractive index."""
 
@@ -306,11 +365,279 @@ class SampledMaterial(MaterialBase):
         return np.squeeze(n)
 
 
+class AnisotropicSampledMaterial(MaterialBase):
+    """A material with a sampled, diagonally anisotropic refractive index.
+
+    The refractive index along each of the x, y and z axes is sampled
+    independently over the same parameters (e.g. the wavelength).
+    """
+
+    n: dict[ComponentType, Annotated[NDArray, Dim(1), DType("complex128")]] = Field(
+        description="the complex refractive index along each of 'x', 'y' and 'z'"
+    )
+    params: dict[str, Annotated[NDArray, Dim(1), DType("float64")]] = Field(
+        description="the parameters (e.g. wavelength) over which n is defined."
+    )
+
+    @model_validator(mode="after")
+    def _validate_params_length(self: Self) -> Self:
+        if set(self.n) != {"x", "y", "z"}:
+            msg = f"n must have keys 'x', 'y' and 'z'. Got {sorted(self.n)}."
+            raise ValueError(msg)
+        for comp, n in self.n.items():
+            for p, v in self.params.items():
+                if v.shape[0] != n.shape[0]:
+                    msg = (
+                        f"length of parameter array {p} does not match length "
+                        f"of refractive index array n[{comp!r}]. \n"
+                        f"{v.shape[0]} != {n.shape[0]}"
+                    )
+                    raise ValueError(msg)
+        return self
+
+    @classmethod
+    def from_path(
+        cls,
+        path: str,
+        axis_num_to_dir: dict[int, ComponentType],
+        meta: dict | None = None,
+    ) -> Self:
+        """Create an AnisotropicSampledMaterial from a CSV file.
+
+        The CSV has columns `wl,n1r,n1i,n2r,n2i,n3r,n3i`. See `from_df`.
+        """
+        path = _validate_path(path)
+        name = re.sub(r"\.csv$", "", os.path.split(path)[-1])
+        df = pd.read_csv(path)
+        return cls.from_df(name, df, axis_num_to_dir, meta=meta)
+
+    @classmethod
+    def from_df(
+        cls,
+        name: str,
+        df: pd.DataFrame,
+        axis_num_to_dir: dict[int, ComponentType],
+        meta: dict | None = None,
+    ) -> Self:
+        """Create an AnisotropicSampledMaterial from a DataFrame.
+
+        Args:
+            name: the name of the material.
+            df: dataframe with columns `wl`, `n{i}r` and (optionally) `n{i}i`
+                for i in 1, 2, 3 (plus any other parameter columns).
+            axis_num_to_dir: maps the axis numbers 1, 2, 3 used in the columns
+                to the directions 'x', 'y', 'z'. Must be a bijection.
+            meta: optional metadata.
+        """
+        meta = meta or {}
+        if set(axis_num_to_dir) != {1, 2, 3} or set(axis_num_to_dir.values()) != {
+            "x",
+            "y",
+            "z",
+        }:
+            msg = (
+                "axis_num_to_dir must map each of 1, 2, 3 to a unique one of "
+                f"'x', 'y', 'z'. Got {axis_num_to_dir}."
+            )
+            raise ValueError(msg)
+
+        n = {}
+        for i, direction in axis_num_to_dir.items():
+            nr = df[f"n{i}r"].to_numpy()
+            ni = df[f"n{i}i"].to_numpy() if f"n{i}i" in df else np.zeros_like(nr)
+            n[direction] = nr + 1j * ni
+
+        used = {f"n{i}{p}" for i in (1, 2, 3) for p in "ri"}
+        params = {
+            c: np.asarray(df[c].values, dtype=np.float64)
+            for c in df.columns
+            if c not in used
+        }
+        return cls(name=name, params=params, n=n, meta=meta)
+
+    def __call__(
+        self,
+        env: Environment,
+        component: ComponentType | None = None,
+    ) -> np.ndarray:
+        """Get the refractive index of the material.
+
+        For the given environment, along the specified component ('x', 'y', or 'z').
+        """
+        if component not in ("x", "y", "z"):
+            msg = f"Component must be 'x', 'y', or 'z', but it was {component}."
+            raise ValueError(msg)
+        if not isinstance(env, Environment):
+            env = Environment(**env)
+        n = self.n[component]
+        df = pd.DataFrame({**self.params, "nr": np.real(n), "ni": np.imag(n)})
+        data, params, strings = _to_ndgrid(df, wl_key="wl")
+        result, axs, pos = _evaluate_general_corner_model(
+            data,
+            params,
+            strings,
+            **{k: np.atleast_1d(v) for k, v in env.model_dump().items()},
+        )
+        nr = result.take(pos["targets"]["nr"], axs["targets"])
+        ni = result.take(pos["targets"]["ni"], axs["targets"])
+        return np.squeeze(nr + 1j * ni)
+
+
+class SampledUniaxialMaterial(AnisotropicSampledMaterial):
+    """A material with a sampled, uniaxial refractive index.
+
+    The extraordinary index applies along the `optical_axis` given at
+    construction, and the ordinary index along the other two axes.
+    """
+
+    @classmethod
+    def from_path(  # ty: ignore[invalid-method-override]
+        cls,
+        path: str,
+        optical_axis: ComponentType,
+        meta: dict | None = None,
+    ) -> Self:
+        """Create a SampledUniaxialMaterial from a CSV file.
+
+        The CSV has columns `wl,nor,noi,ner,nei`. See `from_df`.
+        """
+        path = _validate_path(path)
+        name = re.sub(r"\.csv$", "", os.path.split(path)[-1])
+        df = pd.read_csv(path)
+        return cls.from_df(name, df, optical_axis, meta=meta)
+
+    @classmethod
+    def from_df(  # ty: ignore[invalid-method-override]
+        cls,
+        name: str,
+        df: pd.DataFrame,
+        optical_axis: ComponentType,
+        meta: dict | None = None,
+    ) -> Self:
+        """Create a SampledUniaxialMaterial from a DataFrame.
+
+        Args:
+            name: the name of the material.
+            df: dataframe with columns `wl`, `nor`, `ner` and (optionally)
+                `noi`, `nei` (ordinary / extraordinary, real / imaginary).
+            optical_axis: the optical axis ('x', 'y' or 'z'), i.e. the axis
+                along which the extraordinary index applies.
+            meta: optional metadata.
+        """
+        if optical_axis not in ("x", "y", "z"):
+            msg = f"optical_axis must be 'x', 'y' or 'z'. Got {optical_axis!r}."
+            raise ValueError(msg)
+        nor = df["nor"].to_numpy()
+        ner = df["ner"].to_numpy()
+        noi = df["noi"].to_numpy() if "noi" in df else np.zeros_like(nor)
+        nei = df["nei"].to_numpy() if "nei" in df else np.zeros_like(ner)
+        no, ne = nor + 1j * noi, ner + 1j * nei
+        n = {d: (ne if d == optical_axis else no) for d in ("x", "y", "z")}
+        params = {
+            c: np.asarray(df[c].values, dtype=np.float64)
+            for c in df.columns
+            if c not in ("nor", "noi", "ner", "nei")
+        }
+        return cls(name=name, params=params, n=n, meta=meta or {})
+
+
+DispersionModel: TypeAlias = SellmeierModel | CauchyModel
+"""A `SellmeierModel` or `CauchyModel`."""
+
+
+class DispersionMaterial(MaterialBase):
+    """An isotropic material defined by a `DispersionModel`."""
+
+    dispersion_model: DispersionModel = Field(
+        description="the dispersion model, applied along all three axes"
+    )
+
+    def __call__(
+        self,
+        env: Environment,
+        component: ComponentType | None = None,  # noqa: ARG002
+    ) -> np.ndarray:
+        """Get the refractive index of the material.
+
+        For the given environment, along the specified component ('x', 'y', or 'z').
+        """
+        if not isinstance(env, Environment):
+            env = Environment(**env)
+        return self.dispersion_model(env)
+
+
+class UniaxialDispersionMaterial(MaterialBase):
+    """A uniaxial material defined by two `DispersionModel`s."""
+
+    ordinary_dispersion_model: DispersionModel = Field(
+        description="the dispersion model of the ordinary index"
+    )
+    extraordinary_dispersion_model: DispersionModel = Field(
+        description="the dispersion model of the extraordinary index"
+    )
+    optical_axis: ComponentType = Field(
+        description="the optical axis ('x', 'y' or 'z'): the axis along which the "
+        "extraordinary index applies"
+    )
+
+    def __call__(
+        self, env: Environment, component: ComponentType | None = None
+    ) -> np.ndarray:
+        """Get the refractive index of the material.
+
+        For the given environment, along the specified component ('x', 'y', or 'z').
+        """
+        if component not in ("x", "y", "z"):
+            msg = f"Component must be 'x', 'y', or 'z', but it was {component}."
+            raise ValueError(msg)
+        if not isinstance(env, Environment):
+            env = Environment(**env)
+        if component == self.optical_axis:
+            return self.extraordinary_dispersion_model(env)
+        return self.ordinary_dispersion_model(env)
+
+
+class BiaxialDispersionMaterial(MaterialBase):
+    """A biaxial material with a `DispersionModel` along each of x, y and z."""
+
+    dispersion_model_x: DispersionModel = Field(description="model along x")
+    dispersion_model_y: DispersionModel = Field(description="model along y")
+    dispersion_model_z: DispersionModel = Field(description="model along z")
+
+    def __call__(
+        self, env: Environment, component: ComponentType | None = None
+    ) -> np.ndarray:
+        """Get the refractive index of the material.
+
+        For the given environment, along the specified component ('x', 'y', or 'z').
+        """
+        if component not in ("x", "y", "z"):
+            msg = f"Component must be 'x', 'y', or 'z', but it was {component}."
+            raise ValueError(msg)
+        if not isinstance(env, Environment):
+            env = Environment(**env)
+        model = {
+            "x": self.dispersion_model_x,
+            "y": self.dispersion_model_y,
+            "z": self.dispersion_model_z,
+        }[component]
+        return model(env)
+
+
 Material: TypeAlias = (
-    IndexMaterial | AnisotropicIndexMaterial | SampledMaterial | TidyMaterial
+    IndexMaterial
+    | AnisotropicIndexMaterial
+    | SampledMaterial
+    | AnisotropicSampledMaterial
+    | SampledUniaxialMaterial
+    | DispersionMaterial
+    | UniaxialDispersionMaterial
+    | BiaxialDispersionMaterial
+    | TidyMaterial
 )
-"""A material: `IndexMaterial`, `AnisotropicIndexMaterial`,
-`SampledMaterial`, or `TidyMaterial`."""
+"""A material: `IndexMaterial`, `AnisotropicIndexMaterial`, `SampledMaterial`,
+`AnisotropicSampledMaterial`, `SampledUniaxialMaterial`, `DispersionMaterial`,
+`UniaxialDispersionMaterial`, `BiaxialDispersionMaterial`, or `TidyMaterial`."""
 Materials: TypeAlias = list[Material]
 """A list of `Material` objects."""
 MATERIALS: dict[str, MaterialBase] = {}
@@ -459,6 +786,9 @@ def _validate_path(path: str) -> str:
     return os.path.relpath(path, start=Path.cwd())
 
 
+# NOTE: The materials defined below are not meant to be a comprehensive library
+# of materials. They are examples of how to use the different material options
+# in MEOW.
 silicon = SampledMaterial.from_path(
     path="silicon",
     meta={"color": (0.9, 0, 0, 0.9)},
@@ -469,3 +799,48 @@ silicon_oxide = SampledMaterial.from_path(
 )
 
 silicon_nitride = TidyMaterial(name="Si3N4", variant="Luke2015PMLStable")
+
+# Anisotropic LiNbO3 from the Tidy3D material library, with the optical
+# axis along x, y or z.
+lithium_niobate_optical_x = TidyMaterial(
+    name="LiNbO3", variant="Zelmon1997", optical_axis="x"
+)
+lithium_niobate_optical_y = TidyMaterial(
+    name="LiNbO3", variant="Zelmon1997", optical_axis="y"
+)
+lithium_niobate_optical_z = TidyMaterial(
+    name="LiNbO3", variant="Zelmon1997", optical_axis="z"
+)
+
+# LiTaO3 data source (Table IV, hexagonal crystals, 0.45-4.0 um):
+# Bond, W. L. "Measurement of the refractive indices of several crystals."
+# Journal of Applied Physics 36.5 (1965): 1674-1677.
+# The same sampled data is used with the optical axis (extraordinary index) along
+# each of x, y and z, to show how `optical_axis` works.
+lithium_tantalate_optical_x = SampledUniaxialMaterial.from_df(
+    "lithium_tantalate_optical_x",
+    pd.read_csv(_validate_path("lithium_tantalate")),
+    optical_axis="x",
+    meta={"color": (0.2, 0.4, 0.9, 0.9)},
+)
+lithium_tantalate_optical_y = SampledUniaxialMaterial.from_df(
+    "lithium_tantalate_optical_y",
+    pd.read_csv(_validate_path("lithium_tantalate")),
+    optical_axis="y",
+    meta={"color": (0.2, 0.4, 0.9, 0.9)},
+)
+lithium_tantalate_optical_z = SampledUniaxialMaterial.from_path(
+    "lithium_tantalate",
+    optical_axis="z",
+    meta={"color": (0.2, 0.4, 0.9, 0.9)},
+)
+
+# LiB3O5 (LBO) data source (Table 3, principal refractive indices n_x, n_y, n_z,
+# 0.2537-1.0642 um):
+# Chen, Chuangtian, et al. "New nonlinear-optical crystal: LiB3O5."
+# Journal of the Optical Society of America B 6.4 (1989): 616-621.
+lithium_triborate = AnisotropicSampledMaterial.from_path(
+    "lithium_triborate",
+    axis_num_to_dir={1: "x", 2: "y", 3: "z"},  # principal axes n_x, n_y, n_z
+    meta={"color": (0.6, 0.2, 0.8, 0.9)},
+)
