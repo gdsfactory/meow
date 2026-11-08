@@ -235,6 +235,12 @@ class DispersionModelBase(BaseModel, ABC):
             if self.wavelength_upper_limit is None
             else self.wavelength_upper_limit
         )
+        if env.wl <= 0:
+            msg = (
+                f"Environment wavelength {env.wl} um must be positive. "
+                "Refractive index models are defined for positive wavelengths."
+            )
+            raise ValueError(msg)
         if not (lower <= env.wl <= upper):
             lo_str = "no lower limit" if self.wavelength_lower_limit is None else lower
             hi_str = "no upper limit" if self.wavelength_upper_limit is None else upper

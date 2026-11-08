@@ -183,6 +183,35 @@ def test_dispersion_model_wavelength_range():
         )
 
 
+def test_dispersion_model_rejects_nonpositive_wavelength():
+    """A non-positive wavelength is meaningless and must not divide by zero."""
+    for model in (
+        mw.CauchyModel(A=1.5, B=0.01),
+        mw.SellmeierModel(A=1.0, B=(1.0,), C=(0.01,)),
+    ):
+        for wl in (0.0, -1.0):
+            with pytest.raises(ValueError, match="must be positive"):
+                model(mw.Environment(wl=wl))
+
+
+def test_library_dispersion_limits_are_inclusive():
+    """The documented limits of the library materials are themselves valid."""
+    # lower limits from refractiveindex.info / the source papers
+    assert np.isclose(
+        mw.materials.ktp(mw.Environment(wl=0.43), "x"), 1.81028, atol=1e-5
+    )
+    assert np.isclose(
+        mw.materials.aluminum_nitride_optical_z(mw.Environment(wl=0.22), "x"),
+        2.579368,
+        atol=1e-5,
+    )
+    # and the upper limits
+    assert mw.materials.ktp(mw.Environment(wl=3.54), "x") is not None
+    assert (
+        mw.materials.aluminum_nitride_optical_z(mw.Environment(wl=5.0), "x") is not None
+    )
+
+
 def test_custom_dispersion_model_is_accepted():
     """A user-defined DispersionModelBase subclass can be used as a material."""
 
