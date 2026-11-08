@@ -48,7 +48,7 @@ class MaterialBase(BaseModel):
 
     def __call__(
         self, env: Environment, component: ComponentType | None = None
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -60,8 +60,8 @@ class MaterialBase(BaseModel):
         import matplotlib as mpl
 
         n = self(env)
-        wl = np.asarray(env.wl * unit, dtype=complex).ravel()
-        eps = np.asarray(n, dtype=complex).ravel() ** 2
+        wl = np.asarray(env.wl * unit).ravel()
+        eps = np.asarray(n).ravel() ** 2
         data = np.stack([c / wl, eps], 1)  # permittivity, not index
 
         if not sim.materialexists(self.name):
@@ -116,7 +116,7 @@ class TidyMaterial(MaterialBase):
 
     def __call__(
         self, env: Environment, component: ComponentType | None = None
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -165,7 +165,7 @@ class TidyMaterial(MaterialBase):
             )
             raise TypeError(msg)
 
-        return np.sqrt(eps)
+        return np.sqrt(eps).item()
 
     def _ensure_no_off_diagonal(
         self, tidy3d_medium: AbstractMedium, freq: float
@@ -183,11 +183,57 @@ class TidyMaterial(MaterialBase):
 
 
 class DispersionModelBase(BaseModel, ABC):
-    """A model returning a refractive index for a given `Environment`."""
+    """A model returning a refractive index for a given `Environment`.
+
+    Subclasses should call `self._check_wavelength(env)` before computing an index.
+    It validates that `env.wl` lies within the model's
+    `wavelength_lower_limit`..`wavelength_upper_limit` range, outside of which
+    the fit is not defined; skipping the check would silently return an index
+    extrapolated beyond the fit's validity.
+    """
+
+    wavelength_lower_limit: float = Field(
+        default=0.0, description="lower limit (um) of the valid wavelength range"
+    )
+    wavelength_upper_limit: float = Field(
+        default=float("inf"),
+        description="upper limit (um) of the valid wavelength range",
+    )
+
+    @model_validator(mode="after")
+    def _validate_wavelength_limits(self) -> Self:
+        if self.wavelength_lower_limit > self.wavelength_upper_limit:
+            msg = (
+                "wavelength_lower_limit must not exceed wavelength_upper_limit. "
+                f"Got {self.wavelength_lower_limit} > "
+                f"{self.wavelength_upper_limit}."
+            )
+            raise ValueError(msg)
+        return self
+
+    def _check_wavelength(self, env: Environment) -> None:
+        """Check that `env.wl` is within this model's valid wavelength range.
+
+        Subclasses must call this as the first step of their `__call__`, so that
+        the validity check is always performed.
+
+        Raises:
+            ValueError: if `env.wl` is outside the valid wavelength range.
+        """
+        if not (self.wavelength_lower_limit <= env.wl <= self.wavelength_upper_limit):
+            msg = (
+                f"Environment wavelength {env.wl} um is outside the valid range "
+                f"[{self.wavelength_lower_limit}, {self.wavelength_upper_limit}] "
+                f"um of this dispersion model."
+            )
+            raise ValueError(msg)
 
     @abstractmethod
-    def __call__(self, env: Environment) -> np.ndarray:
-        """Get the refractive index for the given environment."""
+    def __call__(self, env: Environment) -> float | complex:
+        """Get the refractive index for the given environment.
+
+        Implementations should call `self._check_wavelength(env)` first.
+        """
 
 
 class SellmeierModel(DispersionModelBase):
@@ -211,14 +257,31 @@ class SellmeierModel(DispersionModelBase):
             raise ValueError(msg)
         return self
 
-    def __call__(self, env: Environment) -> np.ndarray:
-        """Get the refractive index for the given environment."""
-        wl2 = np.asarray(env.wl, dtype=np.float64) ** 2
+    def __call__(self, env: Environment) -> float:
+        """Get the refractive index for the given environment.
+
+        Raises:
+            ValueError: if the wavelength is outside the valid range (see
+                `DispersionModelBase._check_wavelength`), or if n^2 < 0.
+                Sellmeier models describe lossless media, so they cannot produce
+                a complex index; a negative n^2 means the fit is not physical
+                there.
+        """
+        self._check_wavelength(env)
+        wl2 = env.wl**2
         n2 = self.A + sum(
             (b * wl2 / (wl2 - c) for b, c in zip(self.B, self.C, strict=True)),
-            start=np.zeros_like(wl2),
+            start=0.0,
         )
-        return np.squeeze(np.sqrt(np.asarray(n2, dtype=np.complex128)))
+        if n2 < 0:
+            msg = (
+                f"Sellmeier model is not physical at wl={env.wl} (um): "
+                f"n^2 = {n2} < 0. Sellmeier models describe lossless media and "
+                "cannot represent absorption; use a Lorentz-Debye-Drude model "
+                "for lossy media, or a wavelength within the fit's range."
+            )
+            raise ValueError(msg)
+        return float(np.sqrt(n2))
 
 
 class CauchyModel(DispersionModelBase):
@@ -233,11 +296,16 @@ class CauchyModel(DispersionModelBase):
     B: float = Field(default=0.0, description="Cauchy B coefficient (um^2)")
     C: float = Field(default=0.0, description="Cauchy C coefficient (um^4)")
 
-    def __call__(self, env: Environment) -> np.ndarray:
-        """Get the refractive index for the given environment."""
-        wl2 = np.asarray(env.wl, dtype=np.float64) ** 2
-        n = self.A + self.B / wl2 + self.C / wl2**2
-        return np.squeeze(np.asarray(n, dtype=np.complex128))
+    def __call__(self, env: Environment) -> float:
+        """Get the refractive index for the given environment.
+
+        Raises:
+            ValueError: if the wavelength is outside the valid range (see
+                `DispersionModelBase._check_wavelength`).
+        """
+        self._check_wavelength(env)
+        wl2 = env.wl**2
+        return self.A + self.B / wl2 + self.C / wl2**2
 
 
 class IndexMaterial(MaterialBase):
@@ -249,12 +317,12 @@ class IndexMaterial(MaterialBase):
         self,
         env: Environment,  # noqa: ARG002
         component: ComponentType | None = None,  # noqa: ARG002
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
         """
-        return np.squeeze(np.asarray(self.n, dtype=np.complex128))
+        return self.n
 
 
 class AnisotropicIndexMaterial(MaterialBase):
@@ -268,7 +336,7 @@ class AnisotropicIndexMaterial(MaterialBase):
         self,
         env: Environment,  # noqa: ARG002
         component: ComponentType | None = None,
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -283,7 +351,7 @@ class AnisotropicIndexMaterial(MaterialBase):
             msg = f"Component must be 'x', 'y', or 'z', but it was {component}."
             raise ValueError(msg)
 
-        return np.squeeze(np.asarray(result, dtype=np.complex128))
+        return result
 
 
 class SampledMaterial(MaterialBase):
@@ -344,7 +412,7 @@ class SampledMaterial(MaterialBase):
         self,
         env: Environment,
         component: ComponentType | None = None,  # noqa: ARG002
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -362,7 +430,7 @@ class SampledMaterial(MaterialBase):
         nr = result.take(pos["targets"]["nr"], axs["targets"])
         ni = result.take(pos["targets"]["ni"], axs["targets"])
         n = nr + 1j * ni
-        return np.squeeze(n)
+        return n.item()
 
 
 class SampledAnisotropicMaterial(MaterialBase):
@@ -460,7 +528,7 @@ class SampledAnisotropicMaterial(MaterialBase):
         self,
         env: Environment,
         component: ComponentType | None = None,
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -481,7 +549,7 @@ class SampledAnisotropicMaterial(MaterialBase):
         )
         nr = result.take(pos["targets"]["nr"], axs["targets"])
         ni = result.take(pos["targets"]["ni"], axs["targets"])
-        return np.squeeze(nr + 1j * ni)
+        return (nr + 1j * ni).item()
 
 
 class SampledUniaxialMaterial(SampledAnisotropicMaterial):
@@ -557,7 +625,7 @@ class DispersionMaterial(MaterialBase):
         self,
         env: Environment,
         component: ComponentType | None = None,  # noqa: ARG002
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -583,7 +651,7 @@ class UniaxialDispersionMaterial(MaterialBase):
 
     def __call__(
         self, env: Environment, component: ComponentType | None = None
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -610,7 +678,7 @@ class AnisotropicDispersionMaterial(MaterialBase):
 
     def __call__(
         self, env: Environment, component: ComponentType | None = None
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -825,7 +893,11 @@ indium_phosphide_sellmeier_coefficients = {
 
 indium_phosphide = DispersionMaterial(
     name="InP",
-    dispersion_model=SellmeierModel(**indium_phosphide_sellmeier_coefficients),
+    dispersion_model=SellmeierModel(
+        wavelength_lower_limit=0.95,
+        wavelength_upper_limit=10,
+        **indium_phosphide_sellmeier_coefficients,
+    ),
 )
 
 aluminum_nitride_sellmeier_coefficients_ordinary = {
@@ -838,14 +910,20 @@ aluminum_nitride_sellmeier_coefficients_extraordinary = {
     "B": (1.6173, 4.139),
     "C": (0.1746**2, 15.03**2),
 }
+aluminum_nitride_sellmeier_validity_range = {
+    "wavelength_lower_limit": 0.22,
+    "wavelength_upper_limit": 5.0,
+}
 
 aluminum_nitride_optical_x = UniaxialDispersionMaterial(
     name="AlN",
     ordinary_dispersion_model=SellmeierModel(
-        **aluminum_nitride_sellmeier_coefficients_ordinary
+        **aluminum_nitride_sellmeier_coefficients_ordinary,
+        **aluminum_nitride_sellmeier_validity_range,
     ),
     extraordinary_dispersion_model=SellmeierModel(
-        **aluminum_nitride_sellmeier_coefficients_extraordinary
+        **aluminum_nitride_sellmeier_coefficients_extraordinary,
+        **aluminum_nitride_sellmeier_validity_range,
     ),
     optical_axis="x",
 )
@@ -856,10 +934,12 @@ Sellmeier model."""
 aluminum_nitride_optical_y = UniaxialDispersionMaterial(
     name="AlN",
     ordinary_dispersion_model=SellmeierModel(
-        **aluminum_nitride_sellmeier_coefficients_ordinary
+        **aluminum_nitride_sellmeier_coefficients_ordinary,
+        **aluminum_nitride_sellmeier_validity_range,
     ),
     extraordinary_dispersion_model=SellmeierModel(
-        **aluminum_nitride_sellmeier_coefficients_extraordinary
+        **aluminum_nitride_sellmeier_coefficients_extraordinary,
+        **aluminum_nitride_sellmeier_validity_range,
     ),
     optical_axis="y",
 )
@@ -870,10 +950,12 @@ Sellmeier model."""
 aluminum_nitride_optical_z = UniaxialDispersionMaterial(
     name="AlN",
     ordinary_dispersion_model=SellmeierModel(
-        **aluminum_nitride_sellmeier_coefficients_ordinary
+        **aluminum_nitride_sellmeier_coefficients_ordinary,
+        **aluminum_nitride_sellmeier_validity_range,
     ),
     extraordinary_dispersion_model=SellmeierModel(
-        **aluminum_nitride_sellmeier_coefficients_extraordinary
+        **aluminum_nitride_sellmeier_coefficients_extraordinary,
+        **aluminum_nitride_sellmeier_validity_range,
     ),
     optical_axis="z",
 )
@@ -947,12 +1029,25 @@ ktp_sellmeier_coefficients_z = {
     "B": (0.06206 / 0.04763, 110.80672 / 86.12171),
     "C": (0.04763, 86.12171),
 }
+ktp_sellmeier_validity_range = {
+    "wavelength_lower_limit": 0.43,
+    "wavelength_upper_limit": 3.54,
+}
 
 ktp = AnisotropicDispersionMaterial(
     name="KTP",
-    dispersion_model_x=SellmeierModel(**ktp_sellmeier_coefficients_x),
-    dispersion_model_y=SellmeierModel(**ktp_sellmeier_coefficients_y),
-    dispersion_model_z=SellmeierModel(**ktp_sellmeier_coefficients_z),
+    dispersion_model_x=SellmeierModel(
+        **ktp_sellmeier_coefficients_x,
+        **ktp_sellmeier_validity_range,
+    ),
+    dispersion_model_y=SellmeierModel(
+        **ktp_sellmeier_coefficients_y,
+        **ktp_sellmeier_validity_range,
+    ),
+    dispersion_model_z=SellmeierModel(
+        **ktp_sellmeier_coefficients_z,
+        **ktp_sellmeier_validity_range,
+    ),
 )
 """Potassium titanyl phosphate (KTP), a biaxial crystal, with refractive indices
 n_x, n_y, n_z from Sellmeier equations (valid from 0.43 to 3.54 um) fit to

@@ -135,6 +135,50 @@ def test_sellmeier_model():
         mw.SellmeierModel(B=(1.0, 2.0), C=(1.0,))
 
 
+def test_sellmeier_model_rejects_unphysical_wavelength():
+    """n^2 < 0 lies outside the fit's range; Sellmeier cannot model it."""
+    # fused silica just below its 9.896 um pole, where n^2 goes negative
+    model = mw.SellmeierModel(**FUSED_SILICA_SELLMEIER_COEFFICIENTS)
+    with pytest.raises(ValueError, match="not physical"):
+        model(mw.Environment(wl=9.8))
+
+    # indium phosphide fails outside its valid wavelength range
+    with pytest.raises(ValueError, match="not physical"):
+        mw.materials.indium_phosphide(mw.Environment(wl=0.6))
+    with pytest.raises(ValueError, match="not physical"):
+        mw.materials.indium_phosphide(mw.Environment(wl=30))
+    # ... but fine in its physical band
+    assert np.isclose(
+        mw.materials.indium_phosphide(mw.Environment(wl=1.55)), 3.164929, atol=1e-5
+    )
+
+
+def test_dispersion_model_wavelength_range():
+    """The base class rejects wavelengths outside the model's valid range."""
+    model = mw.CauchyModel(
+        A=1.5,
+        B=0.01,
+        wavelength_lower_limit=1.0,
+        wavelength_upper_limit=2.0,
+    )
+    # inside the range (inclusive on both ends)
+    assert np.isclose(model(mw.Environment(wl=1.0)), 1.5 + 0.01)
+    assert np.isclose(model(mw.Environment(wl=2.0)), 1.5 + 0.01 / 4)
+    # outside the range
+    with pytest.raises(ValueError, match="outside the valid range"):
+        model(mw.Environment(wl=0.99))
+    with pytest.raises(ValueError, match="outside the valid range"):
+        model(mw.Environment(wl=2.01))
+
+    # the limits are inclusive and default to unbounded
+    default = mw.CauchyModel(A=1.5, B=0.01)
+    assert default(mw.Environment(wl=1e-3)) is not None
+    with pytest.raises(ValueError, match="must not exceed"):
+        mw.CauchyModel(
+            A=1.5, B=0.01, wavelength_lower_limit=2.0, wavelength_upper_limit=1.0
+        )
+
+
 def test_cauchy_model():
     model = mw.CauchyModel(A=1.5, B=0.01, C=0.002)
     wl = 0.8
