@@ -184,7 +184,7 @@ class CrossSection(BaseModel):
             # material_names = ['vacuum'] + [mat.name for mat in self.cell.materials]
             # labels = [f"\n{n}\n{v:.3f}" for n, v in zip(material_names, values)]
             labels = [f"{v:.3f}" for v in values]
-            _cbar.ax.set_yticklabels(labels, rotation=90, va="center", ha="center")
+            _cbar.ax.set_yticklabels(labels, va="center")
             plt.sca(ax)
         if show:
             plt.show()

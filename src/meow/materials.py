@@ -897,18 +897,18 @@ def _validate_path(path: str) -> str:
 # in MEOW.
 
 silicon = SampledMaterial.from_path(
-    path="silicon",
+    path="Si",
     meta={"color": (0.9, 0, 0, 0.9)},
 )
 silicon_oxide = SampledMaterial.from_path(
-    path="silicon_oxide",
+    path="SiO2",
     meta={"color": (0.9, 0.9, 0.9, 0.9)},
 )
 
 silicon_nitride = TidyMaterial(
     name="Si3N4",
     variant="Luke2015PMLStable",
-    meta={"color": (0.6, 0.6, 0.7, 0.9)},
+    meta={"color": (0, 0.9, 0.9, 0.9)},
 )
 
 # Anisotropic LiNbO3 from the Tidy3D material library, with the optical
