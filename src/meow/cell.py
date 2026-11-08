@@ -113,7 +113,7 @@ class Cell(BaseModel):
                 ticks=ticks,
                 cax=cax,
             )
-            _cbar.ax.set_yticklabels(labels, rotation=90, va="center")
+            _cbar.ax.set_yticklabels(labels, va="center")
             plt.sca(ax)
         if show:
             plt.show()

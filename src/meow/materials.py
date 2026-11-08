@@ -460,12 +460,16 @@ def _validate_path(path: str) -> str:
 
 
 silicon = SampledMaterial.from_path(
-    path="silicon",
+    path="Si",
     meta={"color": (0.9, 0, 0, 0.9)},
 )
 silicon_oxide = SampledMaterial.from_path(
-    path="silicon_oxide",
+    path="SiO2",
     meta={"color": (0.9, 0.9, 0.9, 0.9)},
 )
 
-silicon_nitride = TidyMaterial(name="Si3N4", variant="Luke2015PMLStable")
+silicon_nitride = TidyMaterial(
+    name="Si3N4",
+    variant="Luke2015PMLStable",
+    meta={"color": (0, 0.9, 0.9, 0.9)},
+)
