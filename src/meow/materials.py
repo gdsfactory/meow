@@ -493,7 +493,7 @@ class SampledAnisotropicMaterial(MaterialBase):
         axis_num_to_dir: dict[int, ComponentType],
         meta: dict | None = None,
     ) -> Self:
-        """Create an AnisotropicSampledMaterial from a CSV file.
+        """Create an SampledAnisotropicMaterial from a CSV file.
 
         The CSV has columns `wl,n1r,n1i,n2r,n2i,n3r,n3i`. See `from_df`.
         """
@@ -510,7 +510,7 @@ class SampledAnisotropicMaterial(MaterialBase):
         axis_num_to_dir: dict[int, ComponentType],
         meta: dict | None = None,
     ) -> Self:
-        """Create an AnisotropicSampledMaterial from a DataFrame.
+        """Create an SampledAnisotropicMaterial from a DataFrame.
 
         Args:
             name: the name of the material.
@@ -648,7 +648,7 @@ Note:
 """
 
 
-class DispersionMaterial(MaterialBase):
+class DispersiveMaterial(MaterialBase):
     """An isotropic material defined by a `DispersionModel`."""
 
     dispersion_model: DispersionModel = Field(
@@ -669,7 +669,7 @@ class DispersionMaterial(MaterialBase):
         return self.dispersion_model(env)
 
 
-class UniaxialDispersionMaterial(MaterialBase):
+class UniaxialDispersiveMaterial(MaterialBase):
     """A uniaxial material defined by two `DispersionModel`s."""
 
     ordinary_dispersion_model: DispersionModel = Field(
@@ -700,7 +700,7 @@ class UniaxialDispersionMaterial(MaterialBase):
         return self.ordinary_dispersion_model(env)
 
 
-class AnisotropicDispersionMaterial(MaterialBase):
+class AnisotropicDispersiveMaterial(MaterialBase):
     """A material with a different `DispersionModel` along each of x, y and z.
 
     Equivalently, a biaxial material.
@@ -736,14 +736,14 @@ Material: TypeAlias = (
     | SampledMaterial
     | SampledAnisotropicMaterial
     | SampledUniaxialMaterial
-    | DispersionMaterial
-    | UniaxialDispersionMaterial
-    | AnisotropicDispersionMaterial
+    | DispersiveMaterial
+    | UniaxialDispersiveMaterial
+    | AnisotropicDispersiveMaterial
     | TidyMaterial
 )
 """A material: `IndexMaterial`, `AnisotropicIndexMaterial`, `SampledMaterial`,
-`AnisotropicSampledMaterial`, `SampledUniaxialMaterial`, `DispersionMaterial`,
-`UniaxialDispersionMaterial`, `BiaxialDispersionMaterial`, or `TidyMaterial`."""
+`SampledAnisotropicMaterial`, `SampledUniaxialMaterial`, `DispersiveMaterial`,
+`UniaxialDispersiveMaterial`, `AnisotropicDispersiveMaterial`, or `TidyMaterial`."""
 Materials: TypeAlias = list[Material]
 """A list of `Material` objects."""
 MATERIALS: dict[str, MaterialBase] = {}
@@ -938,7 +938,7 @@ indium_phosphide_sellmeier_coefficients = {
     "C": (0.6263**2, 32.935**2),
 }
 
-indium_phosphide = DispersionMaterial(
+indium_phosphide = DispersiveMaterial(
     name="InP",
     dispersion_model=SellmeierModel(
         wavelength_lower_limit=0.95,
@@ -963,7 +963,7 @@ aluminum_nitride_sellmeier_validity_range = {
     "wavelength_upper_limit": 5.0,
 }
 
-aluminum_nitride_optical_x = UniaxialDispersionMaterial(
+aluminum_nitride_optical_x = UniaxialDispersiveMaterial(
     name="AlN",
     ordinary_dispersion_model=SellmeierModel(
         **aluminum_nitride_sellmeier_coefficients_ordinary,
@@ -980,7 +980,7 @@ aluminum_nitride_optical_x = UniaxialDispersionMaterial(
 x. Refractive indices for ordinary and extraordinary axes are calculated from a
 Sellmeier model."""
 
-aluminum_nitride_optical_y = UniaxialDispersionMaterial(
+aluminum_nitride_optical_y = UniaxialDispersiveMaterial(
     name="AlN",
     ordinary_dispersion_model=SellmeierModel(
         **aluminum_nitride_sellmeier_coefficients_ordinary,
@@ -997,7 +997,7 @@ aluminum_nitride_optical_y = UniaxialDispersionMaterial(
 y. Refractive indices for ordinary and extraordinary axes are calculated from a
 Sellmeier model."""
 
-aluminum_nitride_optical_z = UniaxialDispersionMaterial(
+aluminum_nitride_optical_z = UniaxialDispersiveMaterial(
     name="AlN",
     ordinary_dispersion_model=SellmeierModel(
         **aluminum_nitride_sellmeier_coefficients_ordinary,
@@ -1085,7 +1085,7 @@ ktp_sellmeier_validity_range = {
     "wavelength_upper_limit": 3.54,
 }
 
-ktp = AnisotropicDispersionMaterial(
+ktp = AnisotropicDispersiveMaterial(
     name="KTP",
     dispersion_model_x=SellmeierModel(
         **ktp_sellmeier_coefficients_x,

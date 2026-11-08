@@ -192,12 +192,12 @@ def test_cross_section_visualization_dispersion_material():
         B=(0.6961663, 0.4079426, 0.8974794),
         C=(0.0684043**2, 0.1162414**2, 9.896161**2),
     )
-    mat = mw.DispersionMaterial(name="vis_disp_sellmeier", dispersion_model=sellmeier)
+    mat = mw.DispersiveMaterial(name="vis_disp_sellmeier", dispersion_model=sellmeier)
     env = mw.Environment(wl=1.0)
     xsec = _make_xsec(mat, env)
     n = 1.45042
     _check_colorbar_upper_limits(
-        xsec, {"x": n, "y": n, "z": n}, "DispersionMaterial (Sellmeier)"
+        xsec, {"x": n, "y": n, "z": n}, "DispersiveMaterial (Sellmeier)"
     )
 
 
@@ -205,7 +205,7 @@ def test_cross_section_visualization_uniaxial_dispersion_material():
     # Cauchy ordinary (1.5 + 0.01/wl^2) and extraordinary (1.7 + 0.02/wl^2) indices
     env = mw.Environment(wl=1.0)
     for optical_axis in components:
-        mat = mw.UniaxialDispersionMaterial(
+        mat = mw.UniaxialDispersiveMaterial(
             name=f"vis_disp_uniaxial_{optical_axis}",
             ordinary_dispersion_model=mw.CauchyModel(A=1.5, B=0.01),
             extraordinary_dispersion_model=mw.CauchyModel(A=1.7, B=0.02),
@@ -214,13 +214,13 @@ def test_cross_section_visualization_uniaxial_dispersion_material():
         xsec = _make_xsec(mat, env, materials.silicon_oxide)
         expected = {c: 1.72 if c == optical_axis else 1.51 for c in components}
         _check_colorbar_upper_limits(
-            xsec, expected, f"UniaxialDispersionMaterial optical axis {optical_axis}"
+            xsec, expected, f"UniaxialDispersiveMaterial optical axis {optical_axis}"
         )
 
 
 def test_cross_section_visualization_biaxial_dispersion_material():
     env = mw.Environment(wl=1.0)
-    mat = mw.AnisotropicDispersionMaterial(
+    mat = mw.AnisotropicDispersiveMaterial(
         name="vis_disp_biaxial",
         dispersion_model_x=mw.CauchyModel(A=1.6),
         dispersion_model_y=mw.CauchyModel(A=1.8, B=0.02),
@@ -228,7 +228,7 @@ def test_cross_section_visualization_biaxial_dispersion_material():
     )
     xsec = _make_xsec(mat, env, materials.silicon_oxide)
     _check_colorbar_upper_limits(
-        xsec, {"x": 1.6, "y": 1.82, "z": 2.04}, "BiaxialDispersionMaterial"
+        xsec, {"x": 1.6, "y": 1.82, "z": 2.04}, "AnisotropicDispersiveMaterial"
     )
 
 

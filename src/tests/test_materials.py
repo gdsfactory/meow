@@ -226,7 +226,7 @@ def test_custom_dispersion_model_is_accepted():
             return self.a + self.b * env.wl**2
 
     custom = QuadraticModel(a=1.5, b=0.1)
-    material = mw.DispersionMaterial(name="custom_disp", dispersion_model=custom)
+    material = mw.DispersiveMaterial(name="custom_disp", dispersion_model=custom)
     assert np.isclose(material(mw.Environment(wl=1.0)), 1.6)
 
     # the custom model's own fields must survive being held by the material
@@ -237,7 +237,7 @@ def test_custom_dispersion_model_is_accepted():
     ranged = QuadraticModel(
         a=1.5, wavelength_lower_limit=1.0, wavelength_upper_limit=2.0
     )
-    ranged_material = mw.DispersionMaterial(
+    ranged_material = mw.DispersiveMaterial(
         name="custom_ranged", dispersion_model=ranged
     )
     with pytest.raises(ValueError, match="outside the valid range"):
@@ -254,7 +254,7 @@ def test_custom_dispersion_model_does_not_roundtrip_silently():
             self._check_wavelength(env)
             return self.a
 
-    material = mw.DispersionMaterial(
+    material = mw.DispersiveMaterial(
         name="custom_nort", dispersion_model=QuadraticModel()
     )
     dumped = material.model_dump()
@@ -263,7 +263,7 @@ def test_custom_dispersion_model_does_not_roundtrip_silently():
     assert "a" not in dumped["dispersion_model"]
     # ... so reading it back must raise rather than silently produce a wrong model
     with pytest.raises(ValueError):
-        mw.DispersionMaterial.model_validate(dumped)
+        mw.DispersiveMaterial.model_validate(dumped)
 
 
 def test_builtin_dispersion_models_roundtrip():
@@ -275,8 +275,8 @@ def test_builtin_dispersion_models_roundtrip():
             A=1.5, B=0.01, wavelength_lower_limit=1.0, wavelength_upper_limit=2.0
         ),
     ):
-        material = mw.DispersionMaterial(name="roundtrip", dispersion_model=model)
-        restored = mw.DispersionMaterial.model_validate(material.model_dump())
+        material = mw.DispersiveMaterial(name="roundtrip", dispersion_model=model)
+        restored = mw.DispersiveMaterial.model_validate(material.model_dump())
         assert type(restored.dispersion_model) is type(model)
         for wl in (1.0, 1.5):
             assert np.isclose(
@@ -289,11 +289,11 @@ def test_dispersion_model_json_roundtrip():
     """Unbounded limits must survive JSON, where inf would become null."""
     import orjson
 
-    material = mw.DispersionMaterial(
+    material = mw.DispersiveMaterial(
         name="json_roundtrip", dispersion_model=mw.CauchyModel(A=1.5, B=0.01)
     )
     as_json = orjson.dumps(material.model_dump()).decode()
-    restored = mw.DispersionMaterial.model_validate_json(as_json)
+    restored = mw.DispersiveMaterial.model_validate_json(as_json)
     assert restored.dispersion_model.wavelength_lower_limit is None
     assert restored.dispersion_model.wavelength_upper_limit is None
     assert np.isclose(
@@ -395,7 +395,7 @@ def test_anisotropic_dispersion_material_ktp():
 
 
 def test_dispersion_material_serialization_roundtrip():
-    mat = mw.UniaxialDispersionMaterial(
+    mat = mw.UniaxialDispersiveMaterial(
         name="disp_roundtrip",
         ordinary_dispersion_model=mw.CauchyModel(A=1.5, B=0.01),
         extraordinary_dispersion_model=mw.SellmeierModel(
@@ -403,7 +403,7 @@ def test_dispersion_material_serialization_roundtrip():
         ),
         optical_axis="z",
     )
-    mat2 = mw.UniaxialDispersionMaterial.model_validate(mat.model_dump())
+    mat2 = mw.UniaxialDispersiveMaterial.model_validate(mat.model_dump())
     assert isinstance(mat2.extraordinary_dispersion_model, mw.SellmeierModel)
     env = mw.Environment(wl=1.2)
     for comp in components:
