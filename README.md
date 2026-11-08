@@ -24,6 +24,12 @@ pip install meow-sim[full]
 
 This will include [gdsfactory](https://github.com/gdsfactory/gdsfactory) dependencies.
 
+### Development installation
+
+To develop MEOW, install the recommended development environment by running in the root of this repo:
+```sh
+uv sync --python 3.12 --all-extras
+```
 
 ## Documentation
 

@@ -112,7 +112,7 @@ def _visualize_overlap_density(
     y_symmetry: bool = False,
     ax: Any = None,
     n_cmap: str | None = None,
-    mode_cmap: str | None = None,
+    mode_cmap: str = "inferno",
     num_levels: int = 8,
     show: bool = True,
 ) -> None:
@@ -196,7 +196,8 @@ def _figsize_visualize_mode(cs: CrossSection, W0: float) -> tuple[float, float]:
     delta_x = x_max - x_min
     delta_y = y_max - y_min
     aspect = delta_y / delta_x
-    W, H = W0 + 1, W0 * aspect + 1
+    # extra width for y labels + colorbar, extra height for title + x labels
+    W, H = W0 + 1.4, W0 * aspect + 0.7
     return W, H
 
 
@@ -207,44 +208,42 @@ def _power(amp: np.ndarray) -> np.ndarray:
 def _visualize_modes(
     modes: list[Mode],
     *,
-    n_cmap: str | None = None,
-    mode_cmap: str | None = None,
-    num_levels: int = 8,
-    operation: Callable = _power,
-    show: bool = True,
-    plot_width: float = 6.4,
+    title_prefix: str = "",
     fields: tuple[str, ...] = ("Ex", "Hx"),
     ax: Any = None,
+    show: bool = True,
+    plot_width: float = 6.4,
+    **kwargs: Any,
 ) -> None:
+    """Visualize a list of modes, one row per mode and one column per field.
+
+    Any other keyword arguments (e.g. title, operation, draw_mode_image) are
+    forwarded to `Mode._visualize`; see there for the available options.
+    """
     num_modes = len(modes)
     cs = modes[0].cs
     W, H = _figsize_visualize_mode(cs, plot_width)
 
     if ax is None:
-        fig, ax = plt.subplots(
+        _fig, ax = plt.subplots(
             num_modes,
-            2,
-            figsize=(2 * W, num_modes * H),
+            len(fields),
+            figsize=(len(fields) * W, num_modes * H),
             sharex=True,
             sharey=True,
             squeeze=False,
+            constrained_layout=True,
         )
     else:
-        fig = None
+        _fig = None
     for i, m in enumerate(modes):
         m._visualize(
-            title=None,
-            title_prefix=f"m{i}: ",
+            **kwargs,
+            title_prefix=title_prefix or f"m{i}: ",
             fields=tuple(fields),
             ax=ax[i],
-            n_cmap=n_cmap,
-            mode_cmap=mode_cmap,
-            num_levels=num_levels,
-            operation=operation,
             show=False,
         )
-    if fig is not None:
-        fig.subplots_adjust(hspace=0, wspace=2 / (2 * W))
     if show:
         plt.show()
 

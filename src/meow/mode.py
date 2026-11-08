@@ -12,7 +12,7 @@ from typing import Any, Literal, TypeAlias, cast
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import colors
-from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.axes import Axes
 from pydantic import Field
 from scipy.constants import epsilon_0 as eps0
 from scipy.constants import mu_0 as mu0
@@ -107,72 +107,157 @@ class Mode(BaseModel):
         """The mesh of the mode."""
         return self.cs.mesh
 
-    def _visualize(  # noqa: PLR0915
+    def _visualize(
         self,
         *,
-        title: str | None = None,
-        title_prefix: str = "",
         fields: tuple[str, ...] = ("Ex",),
         ax: Any = None,
-        n_cmap: str | colors.LinearSegmentedColormap | None = None,
-        mode_cmap: str | None = None,
-        num_levels: int = 8,
-        operation: Callable = _power,
         show: bool = True,
-        **_: Any,
+        **kwargs: Any,
     ) -> None:
-        from meow.visualization import _figsize_visualize_mode
+        """Visualization function for Mode, drawing one plot per field.
 
-        W, H = _figsize_visualize_mode(self.cs, 6.4)
+        Args:
+            fields (tuple[str, ...], optional): Tuple of field components to
+                visualize. Can be "<E or H or P><x or y or z>. Defaults to ("Ex",).
+            ax (Any, optional): Matplotlib axes to draw on: a single Axes, or a
+                (nested) list or array of Axes with at least one per field.
+                Defaults to None, in which case new axes are made.
+            show (bool, optional): Whether to display the plot immediately.
+                Defaults to True.
+            **kwargs: Visualization options forwarded to `Mode._visualize_field`
+                (title, operation, draw_mode_image, ...); see there.
+        """
+        from meow.visualization import _figsize_visualize_mode
 
         if not fields:
             fields = ("Ex",)
 
-        if len(fields) > 1:
+        if len(fields) == 1:
+            if ax is None:
+                ax = plt.gca()
+            else:
+                # ax might be a (nested) list or array of axes; use the first one
+                axes = _flatten_axes(ax)
+                if not axes:
+                    msg = "Empty sequence of axes supplied."
+                    raise ValueError(msg)
+                ax = axes[0]
+            self._visualize_field(fields[0], ax=ax, **kwargs)
+        else:
+            W, H = _figsize_visualize_mode(self.cs, 6.4)
             if len(fields) > 2:
                 max_width = 15
                 current_width = len(fields) * W
                 W, H = _figsize_visualize_mode(self.cs, 6.4 * max_width / current_width)
             if ax is None:
-                _fig, ax = plt.subplots(1, len(fields), figsize=(len(fields) * W, H))
-            if len(ax) < len(fields):
+                _fig, ax = plt.subplots(
+                    1,
+                    len(fields),
+                    figsize=(len(fields) * W, H),
+                    constrained_layout=True,
+                )
+            axes = _flatten_axes(ax)
+            if len(axes) < len(fields):
                 msg = (
                     f"Not enough axes supplied for the number of fields "
-                    f"to plot! {len(ax)} < {len(fields)}."
+                    f"to plot! {len(axes)} < {len(fields)}."
                 )
                 raise ValueError(msg)
-            for field, ax_ in zip(fields, ax, strict=False):
-                self._visualize(
-                    title=title,
-                    title_prefix=title_prefix,
-                    fields=(field,),
-                    ax=ax_,
-                    n_cmap=n_cmap,
-                    mode_cmap=mode_cmap,
-                    num_levels=num_levels,
-                    operation=operation,
-                    show=False,
-                )
-            if show:
-                plt.show()
-            return
+            for field, ax_ in zip(fields, axes, strict=False):
+                self._visualize_field(field, ax=ax_, **kwargs)
 
-        field = "Ex" if not fields else fields[0]
+        if show:
+            plt.show()
+
+    def _visualize_field(
+        self,
+        field: str,
+        *,
+        ax: Axes,
+        title: str | None = None,
+        title_prefix: str = "",
+        operation: Callable = _power,
+        draw_refractive_index: bool | None = None,
+        n_cmap: str | colors.LinearSegmentedColormap | None = None,
+        draw_mode_contours: bool = False,
+        mode_cmap: str = "rainbow",
+        num_levels: int = 8,
+        draw_mode_image: bool = True,
+        mode_image_alpha: float = 0.6,
+        draw_structure_boundaries: bool = True,
+        structure_boundaries_color: str | tuple[float, ...] = "black",
+        **_: Any,
+    ) -> None:
+        """Draw a single field component of the mode on the given axes.
+
+        Args:
+            field (str): Field component to draw: "<E or H or P><x or y or z>".
+            ax (Axes): Matplotlib axes to draw on.
+            title (str | None, optional): Title for plot image. Defaults to None, in
+                which case title is generated using field plotted and effective
+                index.
+            title_prefix (str, optional): Prefix to put before the automatic title
+                (or manual title if specified). Defaults to "".
+            operation (Callable, optional): Vectorized function to apply to mode
+                field. Defaults to |...|^2.
+            draw_refractive_index (bool | None, optional): Whether to draw the
+                refractive index profile below the mode (equivalent to visualizing
+                the mode's CrossSection underneath the mode). Defaults to None, in
+                which case it becomes True iff draw_mode_image is False.
+            n_cmap (str | colors.LinearSegmentedColormap | None):
+                Maps refractive index to color. Defaults to None.
+            draw_mode_contours (bool, optional): Whether to draw mode contours.
+                Defaults to True.
+            mode_cmap (str, optional): Colormap for the mode, used for both the mode
+                image and the mode contours. Defaults to "rainbow".
+            num_levels (int, optional): Number of contour levels for mode
+                contours. Defaults to 8.
+            draw_mode_image (bool, optional): Whether to draw the mode as an image.
+                Defaults to False.
+            mode_image_alpha (float, optional): Transparency of the mode image.
+                Defaults to 0.6.
+            draw_structure_boundaries (bool, optional): Whether to draw lines around
+                structure boundaries. Defaults to False.
+            structure_boundaries_color (str | tuple[float, ...], optional):
+                Structure boundaries color. Defaults to "black".
+        """
+        if not (draw_mode_image or draw_mode_contours):
+            msg = (
+                "Nothing to visualize for the mode: at least one of "
+                "draw_mode_image or draw_mode_contours must be True. "
+                "To plot only the cross section, visualize mode.cs instead."
+            )
+            raise ValueError(msg)
+
+        # by default, draw refractive index if not drawing mode
+        if draw_refractive_index is None:
+            draw_refractive_index = not draw_mode_image
+
         valid_fields = ["Ex", "Ey", "Ez", "Hx", "Hy", "Hz", "Px", "Py", "Pz"]
         if field not in valid_fields:
             msg = f"Invalid field {field!r}. Valid fields: {', '.join(valid_fields)}."
             raise ValueError(msg)
 
-        if ax is None:
-            ax = plt.gca()
         plt.sca(ax)
 
-        if n_cmap is None:
-            # little bit lighter colored than the one in cs._visualize:
-            n_cmap = colors.LinearSegmentedColormap.from_list(
-                name="c_cmap", colors=["#ffffff", "#c1d9ed"]
-            )
-        self.cs._visualize(ax=ax, n_cmap=n_cmap, cbar=False, show=False)
+        # first, draw cross section
+
+        if draw_refractive_index:
+            if n_cmap is None:
+                # little bit lighter colored than the one in cs._visualize:
+                n_cmap = colors.LinearSegmentedColormap.from_list(
+                    name="c_cmap", colors=["#ffffff", "#c1d9ed"]
+                )
+            self.cs._visualize(ax=ax, n_cmap=n_cmap, cbar=False, show=False)
+
+        # draw structure boundaries
+        if draw_structure_boundaries:
+            for structure2d in self.cs.structures:
+                boundary = structure2d.geometry._shapely_polygon().exterior
+                plt.plot(*boundary.xy, color=structure_boundaries_color, linewidth=1)
+
+        # plot mode image then contours
 
         x, y = "x", "y"  # currently only propagation in z supported, see Mesh2D
         c = {
@@ -186,20 +271,48 @@ class Mode(BaseModel):
             "Py": "y",
             "Pz": "z",
         }[field]
-        if mode_cmap is None:
-            mode_cmap = "inferno"
         X = getattr(self.mesh, f"X{c}")
         Y = getattr(self.mesh, f"Y{c}")
         mode = operation(getattr(self, field))
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning)
             levels = np.linspace(mode.min(), mode.max(), num_levels + 1)[1:]
-            plt.contour(X, Y, mode, cmap=mode_cmap, levels=levels)
-            # plt.pcolormesh(X, Y, mode, cmap=mode_cmap, alpha=0.5) #, levels=levels)
-        divider = make_axes_locatable(ax)
-        cax = divider.append_axes("right", size="5%", pad=0.05)
-        plt.colorbar(cax=cax)
+
+            mode_mappable = None
+            if draw_mode_image:
+                mode_mappable = plt.pcolormesh(
+                    X,
+                    Y,
+                    mode,
+                    cmap=mode_cmap,
+                    alpha=mode_image_alpha,
+                    # above everything that's already been plotted, below contours
+                    zorder=3,
+                )
+
+            if draw_mode_contours:
+                contours = plt.contour(
+                    X,
+                    Y,
+                    mode,
+                    cmap=mode_cmap,
+                    levels=levels,
+                    zorder=4,  # above mode image
+                )
+                if mode_mappable is None:
+                    mode_mappable = contours
+
+        # colorbar on right, explicitly for the mode (prefer the continuous image;
+        # it keeps the image's alpha so it matches what's drawn). Passing ax= lets
+        # the figure's layout engine (e.g. constrained layout) reserve its space.
+
+        if mode_mappable is None:  # unreachable: checked at the top of the method
+            msg = "No mode image or contours were drawn."
+            raise RuntimeError(msg)
+        ax.figure.colorbar(mode_mappable, ax=ax, fraction=0.05, pad=0.02)
         plt.sca(ax)
+
+        # labels
 
         plt.xlabel(x)
         plt.ylabel(y)
@@ -208,11 +321,10 @@ class Mode(BaseModel):
             plt.title(f"{title_prefix}{field} [neff={float(np.real(self.neff)):.6f}]")
         else:
             plt.title(f"{title_prefix}{title}")
+
+        plt.axis("scaled")
         plt.xlim(X.min(), X.max())
         plt.ylim(Y.min(), Y.max())
-        plt.axis("scaled")
-        if show:
-            plt.show()
 
     def save(self, filename: str | Path) -> None:
         """Save the mode to a file."""
@@ -297,6 +409,10 @@ Modes: TypeAlias = list[Mode]
 def zero_phase(mode: Mode) -> Mode:
     """Normalize (zero out) the phase of a `Mode`.
 
+    The phase is chosen such that the dominant electric field component (the
+    largest of Ex, Ey, Ez at the energy density maximum) is real and positive
+    there.
+
     Args:
         mode: the mode to normalize the phase of.
 
@@ -305,7 +421,8 @@ def zero_phase(mode: Mode) -> Mode:
     """
     e = np.abs(energy_density(mode))
     m, n = np.array(np.where(e == e.max()))[:, 0]
-    phase = np.exp(-1j * np.angle(np.array(mode.Hx))[m][n])
+    field_component = max(("Ex", "Ey", "Ez"), key=lambda c: abs(getattr(mode, c)[m, n]))
+    phase = np.exp(-1j * np.angle(getattr(mode, field_component)[m, n]))
     new_mode = Mode(
         neff=mode.neff,
         cs=mode.cs,
@@ -316,7 +433,7 @@ def zero_phase(mode: Mode) -> Mode:
         Hy=mode.Hy * phase,
         Hz=mode.Hz * phase,
     )
-    if _sum_around(np.real(new_mode.Hx), int(m), int(n)) < 0:
+    if _sum_around(np.real(getattr(new_mode, field_component)), int(m), int(n)) < 0:
         new_mode = invert_mode(new_mode)
     return new_mode
 
@@ -746,3 +863,19 @@ def _interpolate_Hz(mode: Mode) -> Mode:
         Hz=mode.Hz,
         interpolation="Hz",
     )
+
+
+def _flatten_axes(ax: Any) -> list[Axes]:
+    """Flatten an Axes or a (nested) list/array of Axes into a flat list.
+
+    This is used because plt.subplots(...) can return a single Axes or a nested array
+    of Axes.
+    """
+    if isinstance(ax, Axes):
+        return [ax]
+    flat = list(np.ravel(np.asarray(ax, dtype=object)))
+    for a in flat:
+        if not isinstance(a, Axes):
+            msg = f"Expected matplotlib Axes, got {type(a).__name__}."
+            raise TypeError(msg)
+    return flat

@@ -1,7 +1,6 @@
 dev:
   uv venv --python 3.12
   uv sync --all-extras
-  uv pip install -e .
   uv run pre-commit install
 
 bump version="patch":
@@ -35,11 +34,11 @@ serve: docs
   uv run zensical serve
 
 nbrun: ipykernel
-  find notebooks -maxdepth 2 -mindepth 1 -name "*.ipynb" -not -path "*/.ipynb_checkpoints/*" -not -path "./.venv/*" | xargs parallel -j `nproc --all` uv run papermill {} {} -k meow :::
+  find notebooks -maxdepth 2 -mindepth 1 -name "*.ipynb" -not -path "*/.ipynb_checkpoints/*" -not -path "./.venv/*" | xargs -P `nproc --all` -I {} uv run papermill {} {} -k meow
 
 nbdocs:
   rm -rf docs/nbs/*.ipynb
-  find notebooks -maxdepth 1 -mindepth 1 -name "*.ipynb" -not -path "*/.ipynb_checkpoints/*" -not -path "./.venv/*" | xargs parallel -j `nproc --all` uv run jupyter nbconvert --to markdown --embed-images {} --output-dir docs/nbs ':::'
+  find notebooks -maxdepth 1 -mindepth 1 -name "*.ipynb" -not -path "*/.ipynb_checkpoints/*" -not -path "./.venv/*" | xargs -P `nproc --all` -I {} uv run jupyter nbconvert --to markdown --embed-images {} --output-dir docs/nbs
 
 nbclean-all:
   find . -name "*.ipynb" -not -path "*/.ipynb_checkpoints/*" -not -path "./.venv/*" | xargs just nbclean
