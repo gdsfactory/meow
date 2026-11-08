@@ -905,18 +905,31 @@ silicon_oxide = SampledMaterial.from_path(
     meta={"color": (0.9, 0.9, 0.9, 0.9)},
 )
 
-silicon_nitride = TidyMaterial(name="Si3N4", variant="Luke2015PMLStable")
+silicon_nitride = TidyMaterial(
+    name="Si3N4",
+    variant="Luke2015PMLStable",
+    meta={"color": (0.6, 0.6, 0.7, 0.9)},
+)
 
 # Anisotropic LiNbO3 from the Tidy3D material library, with the optical
 # axis along x, y or z.
 lithium_niobate_optical_x = TidyMaterial(
-    name="LiNbO3", variant="Zelmon1997", optical_axis="x"
+    name="LiNbO3",
+    variant="Zelmon1997",
+    optical_axis="x",
+    meta={"color": (0.9, 0.6, 0.1, 0.9)},
 )
 lithium_niobate_optical_y = TidyMaterial(
-    name="LiNbO3", variant="Zelmon1997", optical_axis="y"
+    name="LiNbO3",
+    variant="Zelmon1997",
+    optical_axis="y",
+    meta={"color": (0.9, 0.6, 0.1, 0.9)},
 )
 lithium_niobate_optical_z = TidyMaterial(
-    name="LiNbO3", variant="Zelmon1997", optical_axis="z"
+    name="LiNbO3",
+    variant="Zelmon1997",
+    optical_axis="z",
+    meta={"color": (0.9, 0.6, 0.1, 0.9)},
 )
 
 indium_phosphide_sellmeier_coefficients = {
@@ -932,6 +945,7 @@ indium_phosphide = DispersionMaterial(
         wavelength_upper_limit=10,
         **indium_phosphide_sellmeier_coefficients,
     ),
+    meta={"color": (0.7, 0.7, 0.3, 0.9)},
 )
 
 aluminum_nitride_sellmeier_coefficients_ordinary = {
@@ -960,6 +974,7 @@ aluminum_nitride_optical_x = UniaxialDispersionMaterial(
         **aluminum_nitride_sellmeier_validity_range,
     ),
     optical_axis="x",
+    meta={"color": (0.3, 0.7, 0.5, 0.9)},
 )
 """Aluminum nitride with optical axis (axis associated with extraordinary index) along
 x. Refractive indices for ordinary and extraordinary axes are calculated from a
@@ -976,6 +991,7 @@ aluminum_nitride_optical_y = UniaxialDispersionMaterial(
         **aluminum_nitride_sellmeier_validity_range,
     ),
     optical_axis="y",
+    meta={"color": (0.3, 0.7, 0.5, 0.9)},
 )
 """Aluminum nitride with optical axis (axis associated with extraordinary index) along
 y. Refractive indices for ordinary and extraordinary axes are calculated from a
@@ -992,6 +1008,7 @@ aluminum_nitride_optical_z = UniaxialDispersionMaterial(
         **aluminum_nitride_sellmeier_validity_range,
     ),
     optical_axis="z",
+    meta={"color": (0.3, 0.7, 0.5, 0.9)},
 )
 """Aluminum nitride with optical axis (axis associated with extraordinary index) along
 z. Refractive indices for ordinary and extraordinary axes are calculated from a
@@ -1082,6 +1099,7 @@ ktp = AnisotropicDispersionMaterial(
         **ktp_sellmeier_coefficients_z,
         **ktp_sellmeier_validity_range,
     ),
+    meta={"color": (0.4, 0.8, 0.8, 0.9)},
 )
 """Potassium titanyl phosphate (KTP), a biaxial crystal, with refractive indices
 n_x, n_y, n_z from Sellmeier equations (valid from 0.43 to 3.54 um) fit to
