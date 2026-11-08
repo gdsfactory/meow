@@ -197,9 +197,9 @@ class SellmeierModel(DispersionModelBase):
     micrometers squared. The temperature of the environment is ignored.
     """
 
+    A: float = Field(default=1.0, description="constant term of n^2")
     B: tuple[float, ...] = Field(description="Sellmeier B coefficients (unitless)")
     C: tuple[float, ...] = Field(description="Sellmeier C coefficients (um^2)")
-    A: float = Field(default=1.0, description="constant term of n^2")
 
     @model_validator(mode="after")
     def _validate_lengths(self) -> Self:
@@ -365,11 +365,12 @@ class SampledMaterial(MaterialBase):
         return np.squeeze(n)
 
 
-class AnisotropicSampledMaterial(MaterialBase):
+class SampledAnisotropicMaterial(MaterialBase):
     """A material with a sampled, diagonally anisotropic refractive index.
 
     The refractive index along each of the x, y and z axes is sampled
-    independently over the same parameters (e.g. the wavelength).
+    independently over the same parameters (e.g. the wavelength). Equivalently,
+    it is a biaxial material.
     """
 
     n: dict[ComponentType, Annotated[NDArray, Dim(1), DType("complex128")]] = Field(
@@ -483,7 +484,7 @@ class AnisotropicSampledMaterial(MaterialBase):
         return np.squeeze(nr + 1j * ni)
 
 
-class SampledUniaxialMaterial(AnisotropicSampledMaterial):
+class SampledUniaxialMaterial(SampledAnisotropicMaterial):
     """A material with a sampled, uniaxial refractive index.
 
     The extraordinary index applies along the `optical_axis` given at
@@ -597,8 +598,11 @@ class UniaxialDispersionMaterial(MaterialBase):
         return self.ordinary_dispersion_model(env)
 
 
-class BiaxialDispersionMaterial(MaterialBase):
-    """A biaxial material with a `DispersionModel` along each of x, y and z."""
+class AnisotropicDispersionMaterial(MaterialBase):
+    """A material with a different `DispersionModel` along each of x, y and z.
+
+    Equivalently, a biaxial material.
+    """
 
     dispersion_model_x: DispersionModel = Field(description="model along x")
     dispersion_model_y: DispersionModel = Field(description="model along y")
@@ -628,11 +632,11 @@ Material: TypeAlias = (
     IndexMaterial
     | AnisotropicIndexMaterial
     | SampledMaterial
-    | AnisotropicSampledMaterial
+    | SampledAnisotropicMaterial
     | SampledUniaxialMaterial
     | DispersionMaterial
     | UniaxialDispersionMaterial
-    | BiaxialDispersionMaterial
+    | AnisotropicDispersionMaterial
     | TidyMaterial
 )
 """A material: `IndexMaterial`, `AnisotropicIndexMaterial`, `SampledMaterial`,
@@ -789,6 +793,7 @@ def _validate_path(path: str) -> str:
 # NOTE: The materials defined below are not meant to be a comprehensive library
 # of materials. They are examples of how to use the different material options
 # in MEOW.
+
 silicon = SampledMaterial.from_path(
     path="silicon",
     meta={"color": (0.9, 0, 0, 0.9)},
@@ -812,35 +817,145 @@ lithium_niobate_optical_z = TidyMaterial(
     name="LiNbO3", variant="Zelmon1997", optical_axis="z"
 )
 
-# LiTaO3 data source (Table IV, hexagonal crystals, 0.45-4.0 um):
-# Bond, W. L. "Measurement of the refractive indices of several crystals."
-# Journal of Applied Physics 36.5 (1965): 1674-1677.
-# The same sampled data is used with the optical axis (extraordinary index) along
-# each of x, y and z, to show how `optical_axis` works.
-lithium_tantalate_optical_x = SampledUniaxialMaterial.from_df(
-    "lithium_tantalate_optical_x",
-    pd.read_csv(_validate_path("lithium_tantalate")),
+indium_phosphide_sellmeier_coefficients = {
+    "A": 7.255,
+    "B": (2.316, 2.765),
+    "C": (0.6263**2, 32.935**2),
+}
+
+indium_phosphide = DispersionMaterial(
+    name="InP",
+    dispersion_model=SellmeierModel(**indium_phosphide_sellmeier_coefficients),
+)
+
+aluminum_nitride_sellmeier_coefficients_ordinary = {
+    "A": 3.1399,
+    "B": (1.3786, 3.861),
+    "C": (0.1715**2, 15.03**2),
+}
+aluminum_nitride_sellmeier_coefficients_extraordinary = {
+    "A": 3.0729,
+    "B": (1.6173, 4.139),
+    "C": (0.1746**2, 15.03**2),
+}
+
+aluminum_nitride_optical_x = UniaxialDispersionMaterial(
+    name="AlN",
+    ordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_ordinary
+    ),
+    extraordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_extraordinary
+    ),
+    optical_axis="x",
+)
+"""Aluminum nitride with optical axis (axis associated with extraordinary index) along
+x. Refractive indices for ordinary and extraordinary axes are calculated from a
+Sellmeier model."""
+
+aluminum_nitride_optical_y = UniaxialDispersionMaterial(
+    name="AlN",
+    ordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_ordinary
+    ),
+    extraordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_extraordinary
+    ),
+    optical_axis="y",
+)
+"""Aluminum nitride with optical axis (axis associated with extraordinary index) along
+y. Refractive indices for ordinary and extraordinary axes are calculated from a
+Sellmeier model."""
+
+aluminum_nitride_optical_z = UniaxialDispersionMaterial(
+    name="AlN",
+    ordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_ordinary
+    ),
+    extraordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_extraordinary
+    ),
+    optical_axis="z",
+)
+"""Aluminum nitride with optical axis (axis associated with extraordinary index) along
+z. Refractive indices for ordinary and extraordinary axes are calculated from a
+Sellmeier model."""
+
+
+lithium_tantalate_optical_x = SampledUniaxialMaterial.from_path(
+    "lithium_tantalate",
     optical_axis="x",
     meta={"color": (0.2, 0.4, 0.9, 0.9)},
 )
-lithium_tantalate_optical_y = SampledUniaxialMaterial.from_df(
-    "lithium_tantalate_optical_y",
-    pd.read_csv(_validate_path("lithium_tantalate")),
+"""Lithium tantalate with the optical axis (axis associated with
+extraordinary index) along x axis.
+LiTaO3 data source (Table IV, hexagonal crystals, 0.45-4.0 um):
+Bond, W. L. "Measurement of the refractive indices of several crystals."
+Journal of Applied Physics 36.5 (1965): 1674-1677."""
+
+lithium_tantalate_optical_y = SampledUniaxialMaterial.from_path(
+    "lithium_tantalate",
     optical_axis="y",
     meta={"color": (0.2, 0.4, 0.9, 0.9)},
 )
+"""Lithium tantalate with the optical axis (axis associated with
+extraordinary index) along y axis.
+LiTaO3 data source (Table IV, hexagonal crystals, 0.45-4.0 um):
+Bond, W. L. "Measurement of the refractive indices of several crystals."
+Journal of Applied Physics 36.5 (1965): 1674-1677."""
+
 lithium_tantalate_optical_z = SampledUniaxialMaterial.from_path(
     "lithium_tantalate",
     optical_axis="z",
     meta={"color": (0.2, 0.4, 0.9, 0.9)},
 )
+"""Lithium tantalate with the optical axis (axis associated with
+extraordinary index) along z axis.
+LiTaO3 data source (Table IV, hexagonal crystals, 0.45-4.0 um):
+Bond, W. L. "Measurement of the refractive indices of several crystals."
+Journal of Applied Physics 36.5 (1965): 1674-1677."""
 
-# LiB3O5 (LBO) data source (Table 3, principal refractive indices n_x, n_y, n_z,
-# 0.2537-1.0642 um):
-# Chen, Chuangtian, et al. "New nonlinear-optical crystal: LiB3O5."
-# Journal of the Optical Society of America B 6.4 (1989): 616-621.
-lithium_triborate = AnisotropicSampledMaterial.from_path(
+
+lithium_triborate = SampledAnisotropicMaterial.from_path(
     "lithium_triborate",
-    axis_num_to_dir={1: "x", 2: "y", 3: "z"},  # principal axes n_x, n_y, n_z
+    axis_num_to_dir={1: "x", 2: "y", 3: "z"},
     meta={"color": (0.6, 0.2, 0.8, 0.9)},
 )
+"""LiB3O5 (LBO) data source (Table 3, principal refractive indices n_x, n_y, n_z,
+0.2537-1.0642 um):
+Chen, Chuangtian, et al. "New nonlinear-optical crystal: LiB3O5."
+Journal of the Optical Society of America B 6.4 (1989): 616-621."""
+
+
+# KTP (KTiOPO4) is biaxial, with a different Sellmeier equation along each of x, y
+# and z. The paper writes each equation as n^2 = A + sum_i B_i / (wl^2 - C_i),
+# whereas SellmeierModel uses n^2 = A + sum_i B_i' wl^2 / (wl^2 - C_i). The two
+# are identical with B_i' = B_i / C_i and A' = A - sum_i B_i / C_i, since
+# B / (wl^2 - C) = (B / C) * (wl^2 / (wl^2 - C) - 1).
+ktp_sellmeier_coefficients_x = {
+    "A": 3.29100 - (0.04140 / 0.03978 + 9.35522 / 31.45571),
+    "B": (0.04140 / 0.03978, 9.35522 / 31.45571),
+    "C": (0.03978, 31.45571),
+}
+ktp_sellmeier_coefficients_y = {
+    "A": 3.45018 - (0.04341 / 0.04597 + 16.98825 / 39.43799),
+    "B": (0.04341 / 0.04597, 16.98825 / 39.43799),
+    "C": (0.04597, 39.43799),
+}
+ktp_sellmeier_coefficients_z = {
+    "A": 4.59423 - (0.06206 / 0.04763 + 110.80672 / 86.12171),
+    "B": (0.06206 / 0.04763, 110.80672 / 86.12171),
+    "C": (0.04763, 86.12171),
+}
+
+ktp = AnisotropicDispersionMaterial(
+    name="KTP",
+    dispersion_model_x=SellmeierModel(**ktp_sellmeier_coefficients_x),
+    dispersion_model_y=SellmeierModel(**ktp_sellmeier_coefficients_y),
+    dispersion_model_z=SellmeierModel(**ktp_sellmeier_coefficients_z),
+)
+"""Potassium titanyl phosphate (KTP), a biaxial crystal, with refractive indices
+n_x, n_y, n_z from Sellmeier equations (valid from 0.43 to 3.54 um) fit to
+flux-grown crystals at 20 C. The Sellmeier equations ignore temperature.
+Kato, Kiyoshi, and Eiko Takaoka. "Sellmeier and thermo-optic dispersion formulas
+for KTP." Applied Optics 41.24 (2002): 5040-5044."""

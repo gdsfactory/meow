@@ -3,6 +3,9 @@ import numpy as np
 
 import meow as mw
 from meow import materials
+from meow.materials import ComponentType
+
+components: list[ComponentType] = ["x", "y", "z"]
 
 # set to True (by running this file with -visualize) to show the plots
 visualize = False
@@ -52,7 +55,7 @@ def _colorbar_upper_limits(fig: plt.Figure) -> list[float]:
 
 
 def _check_colorbar_upper_limits(
-    xsec: mw.CrossSection, expected: dict[str, float], label: str
+    xsec: mw.CrossSection, expected: dict[ComponentType, float], label: str
 ) -> None:
     """Check the colorbar upper limit for each visualized index component."""
     for component, n_expected in expected.items():
@@ -76,7 +79,7 @@ def test_cross_section_visualization_anisotropic():
     # and test that visualize called with index_component='x' or 'y' or 'z'
     # results in top of refractive index legend changing according to the component.
 
-    for optical_axis in ["x", "y", "z"]:
+    for optical_axis in components:
         ln = {
             "x": materials.lithium_niobate_optical_x,
             "y": materials.lithium_niobate_optical_y,
@@ -105,7 +108,7 @@ def test_cross_section_visualization_anisotropic():
 
         env = mw.Environment(wl=1.55, T=20)
         xsec = mw.CrossSection.from_cell(cell=cell, env=env)
-        for index_component_vis in ["x", "y", "z"]:
+        for index_component_vis in components:
             fig, ax = plt.subplots()
             mw.visualize(xsec, index_component=index_component_vis, ax=ax, show=False)
             if visualize:
@@ -122,12 +125,12 @@ def test_cross_section_visualization_anisotropic():
 
                         assert np.isclose(
                             ticks[-1],
-                            ln(env, component=index_component_vis),  # ty: ignore[invalid-argument-type]
+                            ln(env, component=index_component_vis),
                         ), (
                             f"Optical axis = {optical_axis}, "
                             f"index component to visualize = {index_component_vis}."
                             f"Colorbar upper limit is {ticks[-1]}, "
-                            f"but should be {ln(env, component=index_component_vis)}"  # ty: ignore[invalid-argument-type]
+                            f"but should be {ln(env, component=index_component_vis)}"
                         )
                         assert np.isclose(
                             ticks[-1],
@@ -150,11 +153,13 @@ def test_cross_section_visualization_anisotropic_index_material():
 def test_cross_section_visualization_anisotropic_sampled_uniaxial():
     # sampled uniaxial lithium tantalate, optical axis along x, y or z
     env = mw.Environment(wl=1.55)
-    for optical_axis in ["x", "y", "z"]:
+    for optical_axis in components:
         lt = getattr(materials, f"lithium_tantalate_optical_{optical_axis}")
         xsec = _make_xsec(lt, env)
         # interpolated between 1.4 um and 1.6 um table entries (Bond 1965)
-        expected = {comp: 2.1228 if comp == optical_axis else 2.11895 for comp in "xyz"}
+        expected = {
+            comp: 2.1228 if comp == optical_axis else 2.11895 for comp in components
+        }
         _check_colorbar_upper_limits(
             xsec, expected, f"LiTaO3 optical axis {optical_axis}"
         )
@@ -176,7 +181,7 @@ def test_cross_section_visualization_anisotropic_in_cladding():
     xsec = _make_xsec(core, env, materials.silicon_oxide)
     _check_colorbar_upper_limits(
         xsec,
-        {c: float(core(env, c).real) for c in ["x", "y", "z"]},  # ty: ignore[invalid-argument-type]
+        {c: float(core(env, c).real) for c in components},
         "LiNbO3 in SiO2",
     )
 
@@ -199,7 +204,7 @@ def test_cross_section_visualization_dispersion_material():
 def test_cross_section_visualization_uniaxial_dispersion_material():
     # Cauchy ordinary (1.5 + 0.01/wl^2) and extraordinary (1.7 + 0.02/wl^2) indices
     env = mw.Environment(wl=1.0)
-    for optical_axis in ["x", "y", "z"]:
+    for optical_axis in components:
         mat = mw.UniaxialDispersionMaterial(
             name=f"vis_disp_uniaxial_{optical_axis}",
             ordinary_dispersion_model=mw.CauchyModel(A=1.5, B=0.01),
@@ -207,7 +212,7 @@ def test_cross_section_visualization_uniaxial_dispersion_material():
             optical_axis=optical_axis,
         )
         xsec = _make_xsec(mat, env, materials.silicon_oxide)
-        expected = {c: 1.72 if c == optical_axis else 1.51 for c in "xyz"}
+        expected = {c: 1.72 if c == optical_axis else 1.51 for c in components}
         _check_colorbar_upper_limits(
             xsec, expected, f"UniaxialDispersionMaterial optical axis {optical_axis}"
         )
@@ -215,7 +220,7 @@ def test_cross_section_visualization_uniaxial_dispersion_material():
 
 def test_cross_section_visualization_biaxial_dispersion_material():
     env = mw.Environment(wl=1.0)
-    mat = mw.BiaxialDispersionMaterial(
+    mat = mw.AnisotropicDispersionMaterial(
         name="vis_disp_biaxial",
         dispersion_model_x=mw.CauchyModel(A=1.6),
         dispersion_model_y=mw.CauchyModel(A=1.8, B=0.02),
