@@ -143,9 +143,9 @@ def test_sellmeier_model_rejects_unphysical_wavelength():
         model(mw.Environment(wl=9.8))
 
     # indium phosphide fails outside its valid wavelength range
-    with pytest.raises(ValueError, match="not physical"):
+    with pytest.raises(ValueError, match="outside the valid range"):
         mw.materials.indium_phosphide(mw.Environment(wl=0.6))
-    with pytest.raises(ValueError, match="not physical"):
+    with pytest.raises(ValueError, match="outside the valid range"):
         mw.materials.indium_phosphide(mw.Environment(wl=30))
     # ... but fine in its physical band
     assert np.isclose(
@@ -173,10 +173,103 @@ def test_dispersion_model_wavelength_range():
     # the limits are inclusive and default to unbounded
     default = mw.CauchyModel(A=1.5, B=0.01)
     assert default(mw.Environment(wl=1e-3)) is not None
+    assert default.wavelength_lower_limit is None
+    assert default.wavelength_upper_limit is None
+    # None means "no limit" in either direction, not "invalid"
+    assert default(mw.Environment(wl=1e6)) is not None
     with pytest.raises(ValueError, match="must not exceed"):
         mw.CauchyModel(
             A=1.5, B=0.01, wavelength_lower_limit=2.0, wavelength_upper_limit=1.0
         )
+
+
+def test_custom_dispersion_model_is_accepted():
+    """A user-defined DispersionModelBase subclass can be used as a material."""
+
+    class QuadraticModel(mw.DispersionModelBase):
+        """A toy dispersion model: n = a + b * wl^2."""
+
+        a: float = 1.0
+        b: float = 0.0
+
+        def __call__(self, env: mw.Environment) -> float:
+            self._check_wavelength(env)
+            return self.a + self.b * env.wl**2
+
+    custom = QuadraticModel(a=1.5, b=0.1)
+    material = mw.DispersionMaterial(name="custom_disp", dispersion_model=custom)
+    assert np.isclose(material(mw.Environment(wl=1.0)), 1.6)
+
+    # the custom model's own fields must survive being held by the material
+    assert isinstance(material.dispersion_model, QuadraticModel)
+    assert material.dispersion_model.b == 0.1
+
+    # and the inherited wavelength check still applies
+    ranged = QuadraticModel(
+        a=1.5, wavelength_lower_limit=1.0, wavelength_upper_limit=2.0
+    )
+    ranged_material = mw.DispersionMaterial(
+        name="custom_ranged", dispersion_model=ranged
+    )
+    with pytest.raises(ValueError, match="outside the valid range"):
+        ranged_material(mw.Environment(wl=3.0))
+
+
+def test_custom_dispersion_model_does_not_roundtrip_silently():
+    """A custom model serializes incompletely, so deserialization fails loudly."""
+
+    class QuadraticModel(mw.DispersionModelBase):
+        a: float = 1.0
+
+        def __call__(self, env: mw.Environment) -> float:
+            self._check_wavelength(env)
+            return self.a
+
+    material = mw.DispersionMaterial(
+        name="custom_nort", dispersion_model=QuadraticModel()
+    )
+    dumped = material.model_dump()
+
+    # the custom subclass' fields are not part of the dump...
+    assert "a" not in dumped["dispersion_model"]
+    # ... so reading it back must raise rather than silently produce a wrong model
+    with pytest.raises(ValueError):
+        mw.DispersionMaterial.model_validate(dumped)
+
+
+def test_builtin_dispersion_models_roundtrip():
+    """The builtin dispersion models survive a dump/validate roundtrip."""
+    for model in (
+        mw.SellmeierModel(A=1.5, B=(0.01,), C=(0.1,)),
+        mw.CauchyModel(A=1.5, B=0.01),
+        mw.CauchyModel(
+            A=1.5, B=0.01, wavelength_lower_limit=1.0, wavelength_upper_limit=2.0
+        ),
+    ):
+        material = mw.DispersionMaterial(name="roundtrip", dispersion_model=model)
+        restored = mw.DispersionMaterial.model_validate(material.model_dump())
+        assert type(restored.dispersion_model) is type(model)
+        for wl in (1.0, 1.5):
+            assert np.isclose(
+                complex(restored(mw.Environment(wl=wl))),
+                complex(material(mw.Environment(wl=wl))),
+            )
+
+
+def test_dispersion_model_json_roundtrip():
+    """Unbounded limits must survive JSON, where inf would become null."""
+    import orjson
+
+    material = mw.DispersionMaterial(
+        name="json_roundtrip", dispersion_model=mw.CauchyModel(A=1.5, B=0.01)
+    )
+    as_json = orjson.dumps(material.model_dump()).decode()
+    restored = mw.DispersionMaterial.model_validate_json(as_json)
+    assert restored.dispersion_model.wavelength_lower_limit is None
+    assert restored.dispersion_model.wavelength_upper_limit is None
+    assert np.isclose(
+        restored(mw.Environment(wl=1.5)), material(mw.Environment(wl=1.5))
+    )
 
 
 def test_cauchy_model():

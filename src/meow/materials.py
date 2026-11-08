@@ -192,17 +192,24 @@ class DispersionModelBase(BaseModel, ABC):
     extrapolated beyond the fit's validity.
     """
 
-    wavelength_lower_limit: float = Field(
-        default=0.0, description="lower limit (um) of the valid wavelength range"
+    wavelength_lower_limit: float | None = Field(
+        default=None,
+        description="lower limit (um) of the valid wavelength range, or None for "
+        "no lower limit",
     )
-    wavelength_upper_limit: float = Field(
-        default=float("inf"),
-        description="upper limit (um) of the valid wavelength range",
+    wavelength_upper_limit: float | None = Field(
+        default=None,
+        description="upper limit (um) of the valid wavelength range, or None for "
+        "no upper limit",
     )
 
     @model_validator(mode="after")
     def _validate_wavelength_limits(self) -> Self:
-        if self.wavelength_lower_limit > self.wavelength_upper_limit:
+        if (
+            self.wavelength_lower_limit is not None
+            and self.wavelength_upper_limit is not None
+            and self.wavelength_lower_limit > self.wavelength_upper_limit
+        ):
             msg = (
                 "wavelength_lower_limit must not exceed wavelength_upper_limit. "
                 f"Got {self.wavelength_lower_limit} > "
@@ -220,11 +227,20 @@ class DispersionModelBase(BaseModel, ABC):
         Raises:
             ValueError: if `env.wl` is outside the valid wavelength range.
         """
-        if not (self.wavelength_lower_limit <= env.wl <= self.wavelength_upper_limit):
+        lower = (
+            0 if self.wavelength_lower_limit is None else self.wavelength_lower_limit
+        )
+        upper = (
+            float("inf")
+            if self.wavelength_upper_limit is None
+            else self.wavelength_upper_limit
+        )
+        if not (lower <= env.wl <= upper):
+            lo_str = "no lower limit" if self.wavelength_lower_limit is None else lower
+            hi_str = "no upper limit" if self.wavelength_upper_limit is None else upper
             msg = (
                 f"Environment wavelength {env.wl} um is outside the valid range "
-                f"[{self.wavelength_lower_limit}, {self.wavelength_upper_limit}] "
-                f"um of this dispersion model."
+                f"of this dispersion model ({lo_str} to {hi_str} um)."
             )
             raise ValueError(msg)
 
@@ -610,8 +626,20 @@ class SampledUniaxialMaterial(SampledAnisotropicMaterial):
         return cls(name=name, params=params, n=n, meta=meta or {})
 
 
-DispersionModel: TypeAlias = SellmeierModel | CauchyModel
-"""A `SellmeierModel` or `CauchyModel`."""
+DispersionModel: TypeAlias = DispersionModelBase | SellmeierModel | CauchyModel
+"""A `SellmeierModel`, a `CauchyModel`, or any custom `DispersionModelBase`.
+
+`DispersionModelBase` is included so that user-defined subclasses are accepted.
+The concrete models are listed as well so that pydantic can serialize and
+deserialize them: a field annotated with the bare base class only knows the
+base class' fields, so dumping would silently drop the subclass fields.
+
+Note:
+    A user-defined subclass is accepted, but does not roundtrip (serialize/
+    deserialize): it is not part of the union's known models, so serializing
+    drops its fields and deserializing fails with a `ValidationError` rather
+    than silently reconstructing the wrong model.
+"""
 
 
 class DispersionMaterial(MaterialBase):
