@@ -190,6 +190,44 @@ def _is_two_tuple(obj: Any) -> bool:
     return len(obj) == 2
 
 
+def add_right_colorbar(
+    ax: Any,
+    mappable: Any,
+    *,
+    ticks: Any = None,
+) -> Any:
+    """Add a colorbar hugging the right edge of ``ax``.
+
+    Uses an ``inset_axes`` anchored in the parent's own coordinates rather than
+    ``figure.colorbar(ax=ax)``. The latter asks the layout engine to reserve
+    space, which behaves well in a tight figure but leaves a large gap once the
+    figure is wider than the grid needs -- the gap grows with the figure width,
+    so resizing the window visibly detaches the bar from its plot. Anchoring to
+    ``ax.transAxes`` keeps the bar a fixed small distance from the plot at any
+    figure size, which is what makes interactive resizing behave.
+
+    Args:
+        ax: the axes the colorbar belongs to.
+        mappable: the mappable (e.g. the ``QuadMesh`` from ``pcolormesh``).
+        ticks: optional explicit tick locations.
+
+    Returns:
+        The created colorbar.
+    """
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes  # fmt: skip
+
+    cax = inset_axes(
+        ax,
+        width="5%",
+        height="100%",
+        loc="lower left",
+        bbox_to_anchor=(1.05, 0, 1, 1),
+        bbox_transform=ax.transAxes,
+        borderpad=0,
+    )
+    return ax.figure.colorbar(mappable, cax=cax, ticks=ticks)
+
+
 def _figsize_visualize_mode(cs: CrossSection, W0: float) -> tuple[float, float]:
     x_min, x_max = cs.mesh.x.min(), cs.mesh.x.max()
     y_min, y_max = cs.mesh.y.min(), cs.mesh.y.max()

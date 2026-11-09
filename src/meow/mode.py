@@ -303,13 +303,14 @@ class Mode(BaseModel):
                     mode_mappable = contours
 
         # colorbar on right, explicitly for the mode (prefer the continuous image;
-        # it keeps the image's alpha so it matches what's drawn). Passing ax= lets
-        # the figure's layout engine (e.g. constrained layout) reserve its space.
+        # it keeps the image's alpha so it matches what's drawn).
 
         if mode_mappable is None:  # unreachable: checked at the top of the method
             msg = "No mode image or contours were drawn."
             raise RuntimeError(msg)
-        ax.figure.colorbar(mode_mappable, ax=ax, fraction=0.05, pad=0.02)
+        from meow.visualization import add_right_colorbar
+
+        add_right_colorbar(ax, mode_mappable)
         plt.sca(ax)
 
         # labels

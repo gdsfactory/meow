@@ -80,7 +80,6 @@ class Cell(BaseModel):
     ) -> None:
         import matplotlib.pyplot as plt
         from matplotlib.colors import ListedColormap, to_rgba
-        from mpl_toolkits.axes_grid1 import make_axes_locatable
 
         colors = [(0, 0, 0, 0)] + [
             to_rgba(m.meta.get("color", (0, 0, 0, 0))) for m in self.materials
@@ -90,7 +89,7 @@ class Cell(BaseModel):
             plt.sca(ax)
         else:
             ax = plt.gca()
-        plt.pcolormesh(
+        mappable = plt.pcolormesh(
             self.mesh.X_full,
             self.mesh.Y_full,
             self.m_full,
@@ -98,23 +97,20 @@ class Cell(BaseModel):
             vmin=0,
             vmax=len(self.materials) + 1,
         )
-        plt.axis("scaled")
         plt.grid(visible=True)
         if cbar:
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes("right", size="5%", pad=0.05)
             labels = ["vacuum"]
             ticks = [0.5]
             for material, index in self.materials.items():
                 labels.append(material.name)
                 ticks.append(index + 0.5)
 
-            _cbar = plt.colorbar(
-                ticks=ticks,
-                cax=cax,
-            )
+            from meow.visualization import add_right_colorbar
+
+            _cbar = add_right_colorbar(ax, mappable, ticks=ticks)
             _cbar.ax.set_yticklabels(labels, va="center")
             plt.sca(ax)
+        plt.axis("scaled")
         if show:
             plt.show()
 

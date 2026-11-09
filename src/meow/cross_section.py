@@ -18,7 +18,7 @@ from meow.cell import (
     sort_structures,
 )
 from meow.environment import Environment
-from meow.materials import ComponentType, Material
+from meow.materials import ComponentType, Material, SpatiallyVaryingMaterial
 from meow.mesh import Mesh2D
 from meow.structures import Structure2D
 
@@ -40,6 +40,17 @@ class CrossSection(BaseModel):
         default=True,
         description="use subpixel smoothing at interfaces; if False: winner-takes-all",
     )
+    z: float | None = Field(
+        default=None,
+        description="""The z-position at which this CrossSection is sampled.
+
+        Only used by spatially varying materials that vary along z; it is passed
+        as the `z` argument of their index callable. It may be None if the
+        z-position is unknown (for example when a CrossSection is constructed
+        directly rather than through `from_cell`), in which case a material that
+        genuinely depends on z is expected to raise. Materials that do not vary
+        along z ignore it.""",
+    )
     _cell: Cell | None = PrivateAttr(default=None)
     _n_full_cache: dict[ComponentType, ComplexArray2D] = PrivateAttr(
         default_factory=dict
@@ -59,6 +70,7 @@ class CrossSection(BaseModel):
             mesh=cell.mesh,
             env=env,
             subpixel_smoothing=subpixel_smoothing,
+            z=cell.z,
         )
         result._cell = cell
         return result
@@ -78,14 +90,25 @@ class CrossSection(BaseModel):
         return _create_full_material_array(self.mesh, self.structures, self.materials)
 
     def n_full(self, component: ComponentType = "x") -> ComplexArray2D:
-        """Return the refractive index (along the given axis) for the full mesh."""
+        """Return the refractive index (along the given axis) for the full mesh.
+
+        This does not do any subpixel smoothing; it returns the raw material values.
+        """
         # check if n_full for this component exists in cache
         if component in self._n_full_cache:
             return self._n_full_cache[component]
-        n_full = np.ones_like(self.mesh.X_full, dtype=np.complex128)
+        n_full = np.full_like(self.mesh.X_full, _VACUUM_EPS, dtype=np.complex128)
         for material, idx in self.materials.items():
-            n_full = np.where(
-                self._m_full == idx, material(self.env, component=component), n_full
+            mask = self._m_full == idx
+            if not np.any(mask):
+                continue
+            n_full[mask] = _material_n(
+                material,
+                self.env,
+                component,
+                self.mesh.X_full[mask],
+                self.mesh.Y_full[mask],
+                self.z,
             )
         self._n_full_cache[component] = n_full
         return n_full
@@ -98,10 +121,22 @@ class CrossSection(BaseModel):
         """
         if self.subpixel_smoothing:
             return _compute_smoothed_n(
-                self.mesh, self._m_full, self.materials, self.env, self.structures, "x"
+                self.mesh,
+                self._m_full,
+                self.materials,
+                self.env,
+                self.structures,
+                "x",
+                z=self.z,
             )
         return _compute_winner_takes_all_n(
-            self.mesh, self._m_full, self.materials, self.env, self.structures, "x"
+            self.mesh,
+            self._m_full,
+            self.materials,
+            self.env,
+            self.structures,
+            "x",
+            z=self.z,
         )
 
     @cached_property
@@ -112,10 +147,22 @@ class CrossSection(BaseModel):
         """
         if self.subpixel_smoothing:
             return _compute_smoothed_n(
-                self.mesh, self._m_full, self.materials, self.env, self.structures, "y"
+                self.mesh,
+                self._m_full,
+                self.materials,
+                self.env,
+                self.structures,
+                "y",
+                z=self.z,
             )
         return _compute_winner_takes_all_n(
-            self.mesh, self._m_full, self.materials, self.env, self.structures, "y"
+            self.mesh,
+            self._m_full,
+            self.materials,
+            self.env,
+            self.structures,
+            "y",
+            z=self.z,
         )
 
     @cached_property
@@ -126,10 +173,22 @@ class CrossSection(BaseModel):
         """
         if self.subpixel_smoothing:
             return _compute_smoothed_n(
-                self.mesh, self._m_full, self.materials, self.env, self.structures, "z"
+                self.mesh,
+                self._m_full,
+                self.materials,
+                self.env,
+                self.structures,
+                "z",
+                z=self.z,
             )
         return _compute_winner_takes_all_n(
-            self.mesh, self._m_full, self.materials, self.env, self.structures, "z"
+            self.mesh,
+            self._m_full,
+            self.materials,
+            self.env,
+            self.structures,
+            "z",
+            z=self.z,
         )
 
     def _visualize(
@@ -144,7 +203,6 @@ class CrossSection(BaseModel):
     ) -> None:
         import matplotlib.pyplot as plt  # fmt: skip
         from matplotlib import colors  # fmt: skip
-        from mpl_toolkits.axes_grid1 import make_axes_locatable  # fmt: skip
 
         debug_grid = ignored.pop("debug_grid", False)
         if n_cmap is None:
@@ -157,8 +215,9 @@ class CrossSection(BaseModel):
             ax = plt.gca()
         n_full = np.real(self.n_full(component=index_component)).copy()
         n_full[0, 0] = 1.0
-        plt.pcolormesh(self.mesh.X_full, self.mesh.Y_full, n_full, cmap=n_cmap)
-        plt.axis("scaled")
+        mappable = plt.pcolormesh(
+            self.mesh.X_full, self.mesh.Y_full, n_full, cmap=n_cmap
+        )
         if not debug_grid:
             plt.grid(visible=True)
         else:
@@ -177,20 +236,76 @@ class CrossSection(BaseModel):
             plt.grid(visible=True, which="major", ls="-")
             plt.grid(visible=True, which="minor", ls=":")
         if cbar:
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes("right", size="5%", pad=0.05)
             values = np.unique(np.real(n_full))
-            _cbar = plt.colorbar(ticks=values, cax=cax)
+            from meow.visualization import add_right_colorbar
+
+            _cbar = add_right_colorbar(ax, mappable, ticks=values)
             # material_names = ['vacuum'] + [mat.name for mat in self.cell.materials]
             # labels = [f"\n{n}\n{v:.3f}" for n, v in zip(material_names, values)]
             labels = [f"{v:.3f}" for v in values]
             _cbar.ax.set_yticklabels(labels, va="center")
             plt.sca(ax)
+        # Applied after the colorbar, as Mode._visualize does: adding a colorbar
+        # with ``ax=`` sets the parent axes' anchor to (1.0, 0.5), which pushes
+        # the plot off-centre inside its box. Calling ``axis("scaled")`` again
+        # resets the anchor to 'C', so panels in different rows stay aligned.
+        plt.axis("scaled")
         if show:
             plt.show()
 
 
 # --- Subpixel permittivity smoothing ---
+
+_VACUUM_EPS = np.complex128(1.0) ** 2
+"""Permittivity of the background (vacuum, n=1)."""
+
+
+def _staggered_coords(
+    mesh: Mesh2D, component: ComponentType
+) -> tuple[ComplexArray2D, ComplexArray2D]:
+    """Return the (X, Y) coordinates of the given field component's positions."""
+    coords = {
+        "x": (mesh.Xx, mesh.Yx),
+        "y": (mesh.Xy, mesh.Yy),
+        "z": (mesh.Xz, mesh.Yz),
+    }[component]
+    return coords
+
+
+def _is_spatially_varying(material: Material) -> bool:
+    """Whether the material defines its index as a coordinate function."""
+    return isinstance(material, SpatiallyVaryingMaterial)
+
+
+def _material_n(
+    material: Material,
+    env: Environment,
+    component: ComponentType,
+    x: np.ndarray,
+    y: np.ndarray,
+    z: float | None,
+) -> float | complex | np.ndarray:
+    """Refractive index of ``material`` at the given coordinates.
+
+    For a spatially varying material the user callable is evaluated at the given
+    coordinates; otherwise the material's scalar index is returned.
+
+    Args:
+        material: the material to evaluate.
+        env: the environment.
+        component: the field component ('x', 'y' or 'z').
+        x: the x coordinates to evaluate at.
+        y: the y coordinates to evaluate at.
+        z: the z-position, or None if unknown.
+
+    Returns:
+        A scalar for a constant material, or an array broadcastable to ``x`` for
+        a spatially varying material.
+    """
+    if not _is_spatially_varying(material):
+        return material(env, component=component)
+    return material.n_at(env, x, y, z, component=component)  # ty: ignore[unresolved-attribute]
+
 
 _COMPONENT_SLICES = {
     "x": (slice(1, None, 2), slice(None, None, 2)),  # Ex: [1::2, ::2]
@@ -255,6 +370,7 @@ def _compute_smoothed_n(  # noqa: PLR0915
     env: Environment,
     structures: list[Structure2D],
     component: ComponentType,
+    z: float | None = None,
 ) -> ComplexArray2D:
     """Compute subpixel-smoothed refractive index for a field component.
 
@@ -262,19 +378,17 @@ def _compute_smoothed_n(  # noqa: PLR0915
     area-fraction-weighted averaging:
       - E parallel to interface:      arithmetic avg  eps_eff = sum(f_i * eps_i)
       - E perpendicular to interface: harmonic avg    1/eps_eff = sum(f_i / eps_i)
+
+    The per-material permittivity is looked up per *pixel* rather than per
+    material index, so that a spatially varying material is smoothed against its
+    neighbours using its locally sampled permittivity. For materials with a
+    constant index the per-pixel value is just that constant, so the result is
+    unchanged.
     """
     si, sj = _COMPONENT_SLICES[component]
     m_comp = m_full[si, sj]
 
-    # Build eps array from material indices
-    env_eps = np.complex128(1.0) ** 2  # background: vacuum (n=1)
-    eps = np.full_like(m_comp, env_eps, dtype=np.complex128)
-    mat_eps: dict[int, complex] = {0: env_eps}
-    for material, idx in materials.items():
-        n_val = material(env, component=component)
-        e = n_val**2
-        eps[m_comp == idx] = e
-        mat_eps[idx] = e
+    eps, _ = _build_eps(mesh, m_comp, materials, env, component, z)
 
     # Identify interface pixels (where material differs from any 4-neighbor)
     padded = np.pad(m_comp, 1, mode="edge")
@@ -339,6 +453,36 @@ def _compute_smoothed_n(  # noqa: PLR0915
     # Ez is always parallel to interface -> always arithmetic
     # Corners -> arithmetic (use_harmonic stays False)
 
+    # Permittivity of each material *at each interface pixel*, so that a
+    # spatially varying material contributes its locally sampled value where it
+    # meets a neighbour. For a constant material this is just its scalar eps.
+    # Note this cannot be read off `eps`, which only holds the rasterizer's
+    # winner for the pixel and so would give the wrong material's value.
+    eps_at: dict[int, np.ndarray] = {
+        idx: np.full(len(ii), complex(_VACUUM_EPS), dtype=np.complex128)
+        for idx in fractions
+    }
+    for material, idx in materials.items():
+        if idx not in eps_at:
+            continue
+        if _is_spatially_varying(material):
+            xs_c, ys_c = _staggered_coords(mesh, component)
+            # Broadcast: a user callable may legitimately return a scalar even
+            # when given coordinate arrays, so the result is expanded to one
+            # value per interface pixel rather than left as a 0-d array.
+            eps_at[idx] = np.broadcast_to(
+                np.asarray(
+                    _material_n(material, env, component, xs_c[ii, jj], ys_c[ii, jj], z)
+                )
+                ** 2,
+                (len(ii),),
+            )
+        else:
+            eps_at[idx] = np.full(
+                len(ii), complex(np.asarray(material(env, component=component)) ** 2)
+            )
+    # Background vacuously holds vacuum eps (already initialised above).
+
     # Compute effective eps for each interface pixel
     eps_eff = np.zeros(len(ii), dtype=np.complex128)
 
@@ -347,19 +491,20 @@ def _compute_smoothed_n(  # noqa: PLR0915
     if np.any(arith_mask):
         eps_arith = np.zeros(arith_mask.sum(), dtype=np.complex128)
         for idx, frac in fractions.items():
-            eps_arith += frac[arith_mask] * mat_eps[idx]
+            eps_arith += frac[arith_mask] * eps_at[idx][arith_mask]
         eps_eff[arith_mask] = eps_arith
 
     # Harmonic average: 1/eps_eff = sum(f_i / eps_i)
     if np.any(use_harmonic):
         inv_eps_harm = np.zeros(use_harmonic.sum(), dtype=np.complex128)
         for idx, frac in fractions.items():
-            e = mat_eps[idx]
-            if abs(e) > 0:
-                inv_eps_harm += frac[use_harmonic] / e
-        # Avoid division by zero
-        safe = np.abs(inv_eps_harm) > 1e-30
+            e = eps_at[idx][use_harmonic]
+            nonzero = np.abs(e) > 0
+            contrib = np.zeros_like(e)
+            contrib[nonzero] = 1.0 / e[nonzero]
+            inv_eps_harm += frac[use_harmonic] * contrib
         eps_harm = np.zeros_like(inv_eps_harm)
+        safe = np.abs(inv_eps_harm) > 1e-30
         eps_harm[safe] = 1.0 / inv_eps_harm[safe]
         eps_harm[~safe] = eps[ii[use_harmonic], jj[use_harmonic]][~safe]
         eps_eff[use_harmonic] = eps_harm
@@ -370,6 +515,34 @@ def _compute_smoothed_n(  # noqa: PLR0915
     return np.sqrt(eps)
 
 
+def _build_eps(
+    mesh: Mesh2D,
+    m_comp: IntArray2D,
+    materials: dict[Material, int],
+    env: Environment,
+    component: ComponentType,
+    z: float | None,
+) -> tuple[ComplexArray2D, dict[int, complex]]:
+    """Build the per-pixel permittivity array for a component.
+
+    Returns the eps array and the per-material-index scalar eps (used for
+    materials with a constant index; the map is only valid for those).
+    """
+    eps = np.full_like(m_comp, _VACUUM_EPS, dtype=np.complex128)
+    mat_eps: dict[int, complex] = {0: complex(_VACUUM_EPS)}
+    xs, ys = _staggered_coords(mesh, component)
+    for material, idx in materials.items():
+        mask = m_comp == idx
+        if not np.any(mask):
+            continue
+        n_val = _material_n(material, env, component, xs[mask], ys[mask], z)
+        e = np.asarray(n_val) ** 2
+        eps[mask] = e
+        if not _is_spatially_varying(material):
+            mat_eps[idx] = complex(e)
+    return eps, mat_eps
+
+
 def _compute_winner_takes_all_n(
     mesh: Mesh2D,
     m_full: IntArray2D,
@@ -377,6 +550,7 @@ def _compute_winner_takes_all_n(
     env: Environment,
     structures: list[Structure2D],
     component: ComponentType,
+    z: float | None = None,
 ) -> ComplexArray2D:
     """Compute refractive index using winner-takes-all (no subpixel smoothing).
 
@@ -384,20 +558,21 @@ def _compute_winner_takes_all_n(
       1. Compute overlap fraction of each material polygon with the cell.
       2. If no single material covers >= 50%, assign background index.
       3. Otherwise, pick the material with the highest overlap.
-      4. Ties are broken by mesh order (higher wins).
+      4. Ties are broken by mesh order, highest winning -- note this is the
+         OPPOSITE of `_create_full_material_array`, which lets the lowest
+         mesh_order win (it applies last-wins over a descending sort). The two
+         disagree on ties; see mwe_mesh_order.py. Not yet resolved because
+         changing it would alter public behaviour.
+
+    A spatially varying material keeps its per-pixel sampled index where it wins;
+    the winner is still chosen per material index, which is well defined because
+    a spatially varying material is a single material region.
     """
     si, sj = _COMPONENT_SLICES[component]
     m_comp = m_full[si, sj]
 
     # Build eps array from material indices (start with non-interface values)
-    env_eps = np.complex128(1.0) ** 2
-    eps = np.full_like(m_comp, env_eps, dtype=np.complex128)
-    mat_eps: dict[int, complex] = {0: env_eps}
-    for material, idx in materials.items():
-        n_val = material(env, component=component)
-        e = n_val**2
-        eps[m_comp == idx] = e
-        mat_eps[idx] = e
+    eps, mat_eps = _build_eps(mesh, m_comp, materials, env, component, z)
 
     # Identify interface pixels
     padded = np.pad(m_comp, 1, mode="edge")
@@ -458,9 +633,17 @@ def _compute_winner_takes_all_n(
     below_threshold = best_frac < 0.5
     best_idx[below_threshold] = 0
 
-    # Assign eps from winner
-    winner_eps = np.array([mat_eps[idx] for idx in best_idx])
-    eps[ii, jj] = winner_eps
+    # Assign the winner's permittivity. For a constant material that is its
+    # scalar eps; for the background and for a spatially varying material it is
+    # the value sampled at this pixel.
+    for idx, e_const in mat_eps.items():
+        if idx == 0:
+            continue
+        sel = best_idx == idx
+        if np.any(sel):
+            eps[ii[sel], jj[sel]] = e_const
+    # Pixels whose winner is a spatially varying material already hold their
+    # locally sampled value in `eps`, so nothing further is needed for them.
 
     return np.sqrt(eps)
 
