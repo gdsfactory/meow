@@ -272,7 +272,7 @@ def _compute_smoothed_n(  # noqa: PLR0915
     mat_eps: dict[int, complex] = {0: env_eps}
     for material, idx in materials.items():
         n_val = material(env, component=component)
-        e = np.complex128(n_val) ** 2
+        e = n_val**2
         eps[m_comp == idx] = e
         mat_eps[idx] = e
 
@@ -395,7 +395,7 @@ def _compute_winner_takes_all_n(
     mat_eps: dict[int, complex] = {0: env_eps}
     for material, idx in materials.items():
         n_val = material(env, component=component)
-        e = np.complex128(n_val) ** 2
+        e = n_val**2
         eps[m_comp == idx] = e
         mat_eps[idx] = e
 

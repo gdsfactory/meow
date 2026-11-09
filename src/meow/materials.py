@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self, TypeAlias, cast
 
@@ -47,7 +48,7 @@ class MaterialBase(BaseModel):
 
     def __call__(
         self, env: Environment, component: ComponentType | None = None
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -59,8 +60,8 @@ class MaterialBase(BaseModel):
         import matplotlib as mpl
 
         n = self(env)
-        wl = np.asarray(env.wl * unit, dtype=complex).ravel()
-        eps = np.asarray(n, dtype=complex).ravel() ** 2
+        wl = np.asarray(env.wl * unit).ravel()
+        eps = np.asarray(n).ravel() ** 2
         data = np.stack([c / wl, eps], 1)  # permittivity, not index
 
         if not sim.materialexists(self.name):
@@ -115,7 +116,7 @@ class TidyMaterial(MaterialBase):
 
     def __call__(
         self, env: Environment, component: ComponentType | None = None
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -164,7 +165,7 @@ class TidyMaterial(MaterialBase):
             )
             raise TypeError(msg)
 
-        return np.sqrt(eps)
+        return np.sqrt(eps).item()
 
     def _ensure_no_off_diagonal(
         self, tidy3d_medium: AbstractMedium, freq: float
@@ -181,6 +182,154 @@ class TidyMaterial(MaterialBase):
                     raise ValueError(msg)
 
 
+class DispersionModelBase(BaseModel, ABC):
+    """A model returning a refractive index for a given `Environment`.
+
+    Subclasses should call `self._check_wavelength(env)` before computing an index.
+    It validates that `env.wl` lies within the model's
+    `wavelength_lower_limit`..`wavelength_upper_limit` range, outside of which
+    the fit is not defined; skipping the check would silently return an index
+    extrapolated beyond the fit's validity.
+    """
+
+    wavelength_lower_limit: float | None = Field(
+        default=None,
+        description="lower limit (um) of the valid wavelength range, or None for "
+        "no lower limit",
+    )
+    wavelength_upper_limit: float | None = Field(
+        default=None,
+        description="upper limit (um) of the valid wavelength range, or None for "
+        "no upper limit",
+    )
+
+    @model_validator(mode="after")
+    def _validate_wavelength_limits(self) -> Self:
+        if (
+            self.wavelength_lower_limit is not None
+            and self.wavelength_upper_limit is not None
+            and self.wavelength_lower_limit > self.wavelength_upper_limit
+        ):
+            msg = (
+                "wavelength_lower_limit must not exceed wavelength_upper_limit. "
+                f"Got {self.wavelength_lower_limit} > "
+                f"{self.wavelength_upper_limit}."
+            )
+            raise ValueError(msg)
+        return self
+
+    def _check_wavelength(self, env: Environment) -> None:
+        """Check that `env.wl` is within this model's valid wavelength range.
+
+        Subclasses must call this as the first step of their `__call__`, so that
+        the validity check is always performed.
+
+        Raises:
+            ValueError: if `env.wl` is outside the valid wavelength range.
+        """
+        lower = (
+            0 if self.wavelength_lower_limit is None else self.wavelength_lower_limit
+        )
+        upper = (
+            float("inf")
+            if self.wavelength_upper_limit is None
+            else self.wavelength_upper_limit
+        )
+        if env.wl <= 0:
+            msg = (
+                f"Environment wavelength {env.wl} um must be positive. "
+                "Refractive index models are defined for positive wavelengths."
+            )
+            raise ValueError(msg)
+        if not (lower <= env.wl <= upper):
+            lo_str = "no lower limit" if self.wavelength_lower_limit is None else lower
+            hi_str = "no upper limit" if self.wavelength_upper_limit is None else upper
+            msg = (
+                f"Environment wavelength {env.wl} um is outside the valid range "
+                f"of this dispersion model ({lo_str} to {hi_str} um)."
+            )
+            raise ValueError(msg)
+
+    @abstractmethod
+    def __call__(self, env: Environment) -> float | complex:
+        """Get the refractive index for the given environment.
+
+        Implementations should call `self._check_wavelength(env)` first.
+        """
+
+
+class SellmeierModel(DispersionModelBase):
+    """Sellmeier dispersion: n^2 = A + sum_i B_i wl^2 / (wl^2 - C_i).
+
+    The wavelength is in micrometers (as in `Environment`), so the `C_i` are in
+    micrometers squared. The temperature of the environment is ignored.
+    """
+
+    A: float = Field(default=1.0, description="constant term of n^2")
+    B: tuple[float, ...] = Field(description="Sellmeier B coefficients (unitless)")
+    C: tuple[float, ...] = Field(description="Sellmeier C coefficients (um^2)")
+
+    @model_validator(mode="after")
+    def _validate_lengths(self) -> Self:
+        if len(self.B) != len(self.C):
+            msg = (
+                "B and C must have the same length. "
+                f"Got {len(self.B)} and {len(self.C)}."
+            )
+            raise ValueError(msg)
+        return self
+
+    def __call__(self, env: Environment) -> float:
+        """Get the refractive index for the given environment.
+
+        Raises:
+            ValueError: if the wavelength is outside the valid range (see
+                `DispersionModelBase._check_wavelength`), or if n^2 < 0.
+                Sellmeier models describe lossless media, so they cannot produce
+                a complex index; a negative n^2 means the fit is not physical
+                there.
+        """
+        self._check_wavelength(env)
+        wl2 = env.wl**2
+        n2 = self.A + sum(
+            (b * wl2 / (wl2 - c) for b, c in zip(self.B, self.C, strict=True)),
+            start=0.0,
+        )
+        if n2 < 0:
+            msg = (
+                f"Sellmeier model is not physical at wl={env.wl} (um): "
+                f"n^2 = {n2} < 0. Sellmeier models describe lossless media and "
+                "cannot represent absorption; use a Lorentz-Debye-Drude model "
+                "for lossy media, or a wavelength within the fit's range."
+            )
+            raise ValueError(msg)
+        return float(np.sqrt(n2))
+
+
+class CauchyModel(DispersionModelBase):
+    """Cauchy dispersion: n = A + B / wl^2 + C / wl^4.
+
+    The wavelength is in micrometers (as in `Environment`), so B is in
+    micrometers squared and C in micrometers to the fourth. The temperature of the
+    environment is ignored.
+    """
+
+    A: float = Field(description="Cauchy A coefficient (unitless)")
+    B: float = Field(default=0.0, description="Cauchy B coefficient (um^2)")
+    C: float = Field(default=0.0, description="Cauchy C coefficient (um^4)")
+
+    def __call__(self, env: Environment) -> float:
+        """Get the refractive index for the given environment.
+
+        Raises:
+            ValueError: if the wavelength is outside the valid range (see
+                `DispersionModelBase._check_wavelength`).
+        """
+        self._check_wavelength(env)
+        wl2 = env.wl**2
+        return self.A + self.B / wl2 + self.C / wl2**2
+
+
 class IndexMaterial(MaterialBase):
     """A material with a constant refractive index."""
 
@@ -190,12 +339,12 @@ class IndexMaterial(MaterialBase):
         self,
         env: Environment,  # noqa: ARG002
         component: ComponentType | None = None,  # noqa: ARG002
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
         """
-        return np.squeeze(np.asarray(self.n, dtype=np.complex128))
+        return self.n
 
 
 class AnisotropicIndexMaterial(MaterialBase):
@@ -209,7 +358,7 @@ class AnisotropicIndexMaterial(MaterialBase):
         self,
         env: Environment,  # noqa: ARG002
         component: ComponentType | None = None,
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -224,7 +373,7 @@ class AnisotropicIndexMaterial(MaterialBase):
             msg = f"Component must be 'x', 'y', or 'z', but it was {component}."
             raise ValueError(msg)
 
-        return np.squeeze(np.asarray(result, dtype=np.complex128))
+        return result
 
 
 class SampledMaterial(MaterialBase):
@@ -285,7 +434,7 @@ class SampledMaterial(MaterialBase):
         self,
         env: Environment,
         component: ComponentType | None = None,  # noqa: ARG002
-    ) -> np.ndarray:
+    ) -> float | complex:
         """Get the refractive index of the material.
 
         For the given environment, along the specified component ('x', 'y', or 'z').
@@ -303,14 +452,298 @@ class SampledMaterial(MaterialBase):
         nr = result.take(pos["targets"]["nr"], axs["targets"])
         ni = result.take(pos["targets"]["ni"], axs["targets"])
         n = nr + 1j * ni
-        return np.squeeze(n)
+        return n.item()
+
+
+class SampledAnisotropicMaterial(MaterialBase):
+    """A material with a sampled, diagonally anisotropic refractive index.
+
+    The refractive index along each of the x, y and z axes is sampled
+    independently over the same parameters (e.g. the wavelength). Equivalently,
+    it is a biaxial material.
+    """
+
+    n: dict[ComponentType, Annotated[NDArray, Dim(1), DType("complex128")]] = Field(
+        description="the complex refractive index along each of 'x', 'y' and 'z'"
+    )
+    params: dict[str, Annotated[NDArray, Dim(1), DType("float64")]] = Field(
+        description="the parameters (e.g. wavelength) over which n is defined."
+    )
+
+    @model_validator(mode="after")
+    def _validate_params_length(self: Self) -> Self:
+        if set(self.n) != {"x", "y", "z"}:
+            msg = f"n must have keys 'x', 'y' and 'z'. Got {sorted(self.n)}."
+            raise ValueError(msg)
+        for comp, n in self.n.items():
+            for p, v in self.params.items():
+                if v.shape[0] != n.shape[0]:
+                    msg = (
+                        f"length of parameter array {p} does not match length "
+                        f"of refractive index array n[{comp!r}]. \n"
+                        f"{v.shape[0]} != {n.shape[0]}"
+                    )
+                    raise ValueError(msg)
+        return self
+
+    @classmethod
+    def from_path(
+        cls,
+        path: str,
+        axis_num_to_dir: dict[int, ComponentType],
+        meta: dict | None = None,
+    ) -> Self:
+        """Create an SampledAnisotropicMaterial from a CSV file.
+
+        The CSV has columns `wl,n1r,n1i,n2r,n2i,n3r,n3i`. See `from_df`.
+        """
+        path = _validate_path(path)
+        name = re.sub(r"\.csv$", "", os.path.split(path)[-1])
+        df = pd.read_csv(path)
+        return cls.from_df(name, df, axis_num_to_dir, meta=meta)
+
+    @classmethod
+    def from_df(
+        cls,
+        name: str,
+        df: pd.DataFrame,
+        axis_num_to_dir: dict[int, ComponentType],
+        meta: dict | None = None,
+    ) -> Self:
+        """Create an SampledAnisotropicMaterial from a DataFrame.
+
+        Args:
+            name: the name of the material.
+            df: dataframe with columns `wl`, `n{i}r` and (optionally) `n{i}i`
+                for i in 1, 2, 3 (plus any other parameter columns).
+            axis_num_to_dir: maps the axis numbers 1, 2, 3 used in the columns
+                to the directions 'x', 'y', 'z'. Must be a bijection.
+            meta: optional metadata.
+        """
+        meta = meta or {}
+        if set(axis_num_to_dir) != {1, 2, 3} or set(axis_num_to_dir.values()) != {
+            "x",
+            "y",
+            "z",
+        }:
+            msg = (
+                "axis_num_to_dir must map each of 1, 2, 3 to a unique one of "
+                f"'x', 'y', 'z'. Got {axis_num_to_dir}."
+            )
+            raise ValueError(msg)
+
+        n = {}
+        for i, direction in axis_num_to_dir.items():
+            nr = df[f"n{i}r"].to_numpy()
+            ni = df[f"n{i}i"].to_numpy() if f"n{i}i" in df else np.zeros_like(nr)
+            n[direction] = nr + 1j * ni
+
+        used = {f"n{i}{p}" for i in (1, 2, 3) for p in "ri"}
+        params = {
+            c: np.asarray(df[c].values, dtype=np.float64)
+            for c in df.columns
+            if c not in used
+        }
+        return cls(name=name, params=params, n=n, meta=meta)
+
+    def __call__(
+        self,
+        env: Environment,
+        component: ComponentType | None = None,
+    ) -> float | complex:
+        """Get the refractive index of the material.
+
+        For the given environment, along the specified component ('x', 'y', or 'z').
+        """
+        if component not in ("x", "y", "z"):
+            msg = f"Component must be 'x', 'y', or 'z', but it was {component}."
+            raise ValueError(msg)
+        if not isinstance(env, Environment):
+            env = Environment(**env)
+        n = self.n[component]
+        df = pd.DataFrame({**self.params, "nr": np.real(n), "ni": np.imag(n)})
+        data, params, strings = _to_ndgrid(df, wl_key="wl")
+        result, axs, pos = _evaluate_general_corner_model(
+            data,
+            params,
+            strings,
+            **{k: np.atleast_1d(v) for k, v in env.model_dump().items()},
+        )
+        nr = result.take(pos["targets"]["nr"], axs["targets"])
+        ni = result.take(pos["targets"]["ni"], axs["targets"])
+        return (nr + 1j * ni).item()
+
+
+class SampledUniaxialMaterial(SampledAnisotropicMaterial):
+    """A material with a sampled, uniaxial refractive index.
+
+    The extraordinary index applies along the `optical_axis` given at
+    construction, and the ordinary index along the other two axes.
+    """
+
+    @classmethod
+    def from_path(  # ty: ignore[invalid-method-override]
+        cls,
+        path: str,
+        optical_axis: ComponentType,
+        meta: dict | None = None,
+    ) -> Self:
+        """Create a SampledUniaxialMaterial from a CSV file.
+
+        The CSV has columns `wl,nor,noi,ner,nei`. See `from_df`.
+        """
+        path = _validate_path(path)
+        name = re.sub(r"\.csv$", "", os.path.split(path)[-1])
+        df = pd.read_csv(path)
+        return cls.from_df(name, df, optical_axis, meta=meta)
+
+    @classmethod
+    def from_df(  # ty: ignore[invalid-method-override]
+        cls,
+        name: str,
+        df: pd.DataFrame,
+        optical_axis: ComponentType,
+        meta: dict | None = None,
+    ) -> Self:
+        """Create a SampledUniaxialMaterial from a DataFrame.
+
+        Args:
+            name: the name of the material.
+            df: dataframe with columns `wl`, `nor`, `ner` and (optionally)
+                `noi`, `nei` (ordinary / extraordinary, real / imaginary).
+            optical_axis: the optical axis ('x', 'y' or 'z'), i.e. the axis
+                along which the extraordinary index applies.
+            meta: optional metadata.
+        """
+        if optical_axis not in ("x", "y", "z"):
+            msg = f"optical_axis must be 'x', 'y' or 'z'. Got {optical_axis!r}."
+            raise ValueError(msg)
+        nor = df["nor"].to_numpy()
+        ner = df["ner"].to_numpy()
+        noi = df["noi"].to_numpy() if "noi" in df else np.zeros_like(nor)
+        nei = df["nei"].to_numpy() if "nei" in df else np.zeros_like(ner)
+        no, ne = nor + 1j * noi, ner + 1j * nei
+        n = {d: (ne if d == optical_axis else no) for d in ("x", "y", "z")}
+        params = {
+            c: np.asarray(df[c].values, dtype=np.float64)
+            for c in df.columns
+            if c not in ("nor", "noi", "ner", "nei")
+        }
+        return cls(name=name, params=params, n=n, meta=meta or {})
+
+
+DispersionModel: TypeAlias = DispersionModelBase | SellmeierModel | CauchyModel
+"""A `SellmeierModel`, a `CauchyModel`, or any custom `DispersionModelBase`.
+
+`DispersionModelBase` is included so that user-defined subclasses are accepted.
+The concrete models are listed as well so that pydantic can serialize and
+deserialize them: a field annotated with the bare base class only knows the
+base class' fields, so dumping would silently drop the subclass fields.
+
+Note:
+    A user-defined subclass is accepted, but does not roundtrip (serialize/
+    deserialize): it is not part of the union's known models, so serializing
+    drops its fields and deserializing fails with a `ValidationError` rather
+    than silently reconstructing the wrong model.
+"""
+
+
+class DispersiveMaterial(MaterialBase):
+    """An isotropic material defined by a `DispersionModel`."""
+
+    dispersion_model: DispersionModel = Field(
+        description="the dispersion model, applied along all three axes"
+    )
+
+    def __call__(
+        self,
+        env: Environment,
+        component: ComponentType | None = None,  # noqa: ARG002
+    ) -> float | complex:
+        """Get the refractive index of the material.
+
+        For the given environment, along the specified component ('x', 'y', or 'z').
+        """
+        if not isinstance(env, Environment):
+            env = Environment(**env)
+        return self.dispersion_model(env)
+
+
+class UniaxialDispersiveMaterial(MaterialBase):
+    """A uniaxial material defined by two `DispersionModel`s."""
+
+    ordinary_dispersion_model: DispersionModel = Field(
+        description="the dispersion model of the ordinary index"
+    )
+    extraordinary_dispersion_model: DispersionModel = Field(
+        description="the dispersion model of the extraordinary index"
+    )
+    optical_axis: ComponentType = Field(
+        description="the optical axis ('x', 'y' or 'z'): the axis along which the "
+        "extraordinary index applies"
+    )
+
+    def __call__(
+        self, env: Environment, component: ComponentType | None = None
+    ) -> float | complex:
+        """Get the refractive index of the material.
+
+        For the given environment, along the specified component ('x', 'y', or 'z').
+        """
+        if component not in ("x", "y", "z"):
+            msg = f"Component must be 'x', 'y', or 'z', but it was {component}."
+            raise ValueError(msg)
+        if not isinstance(env, Environment):
+            env = Environment(**env)
+        if component == self.optical_axis:
+            return self.extraordinary_dispersion_model(env)
+        return self.ordinary_dispersion_model(env)
+
+
+class AnisotropicDispersiveMaterial(MaterialBase):
+    """A material with a different `DispersionModel` along each of x, y and z.
+
+    Equivalently, a biaxial material.
+    """
+
+    dispersion_model_x: DispersionModel = Field(description="model along x")
+    dispersion_model_y: DispersionModel = Field(description="model along y")
+    dispersion_model_z: DispersionModel = Field(description="model along z")
+
+    def __call__(
+        self, env: Environment, component: ComponentType | None = None
+    ) -> float | complex:
+        """Get the refractive index of the material.
+
+        For the given environment, along the specified component ('x', 'y', or 'z').
+        """
+        if component not in ("x", "y", "z"):
+            msg = f"Component must be 'x', 'y', or 'z', but it was {component}."
+            raise ValueError(msg)
+        if not isinstance(env, Environment):
+            env = Environment(**env)
+        model = {
+            "x": self.dispersion_model_x,
+            "y": self.dispersion_model_y,
+            "z": self.dispersion_model_z,
+        }[component]
+        return model(env)
 
 
 Material: TypeAlias = (
-    IndexMaterial | AnisotropicIndexMaterial | SampledMaterial | TidyMaterial
+    IndexMaterial
+    | AnisotropicIndexMaterial
+    | SampledMaterial
+    | SampledAnisotropicMaterial
+    | SampledUniaxialMaterial
+    | DispersiveMaterial
+    | UniaxialDispersiveMaterial
+    | AnisotropicDispersiveMaterial
+    | TidyMaterial
 )
-"""A material: `IndexMaterial`, `AnisotropicIndexMaterial`,
-`SampledMaterial`, or `TidyMaterial`."""
+"""A material: `IndexMaterial`, `AnisotropicIndexMaterial`, `SampledMaterial`,
+`SampledAnisotropicMaterial`, `SampledUniaxialMaterial`, `DispersiveMaterial`,
+`UniaxialDispersiveMaterial`, `AnisotropicDispersiveMaterial`, or `TidyMaterial`."""
 Materials: TypeAlias = list[Material]
 """A list of `Material` objects."""
 MATERIALS: dict[str, MaterialBase] = {}
@@ -459,6 +892,10 @@ def _validate_path(path: str) -> str:
     return os.path.relpath(path, start=Path.cwd())
 
 
+# NOTE: The materials defined below are not meant to be a comprehensive library
+# of materials. They are examples of how to use the different material options
+# in MEOW.
+
 silicon = SampledMaterial.from_path(
     path="Si",
     meta={"color": (0.9, 0, 0, 0.9)},
@@ -473,3 +910,199 @@ silicon_nitride = TidyMaterial(
     variant="Luke2015PMLStable",
     meta={"color": (0, 0.9, 0.9, 0.9)},
 )
+
+# Anisotropic LiNbO3 from the Tidy3D material library, with the optical
+# axis along x, y or z.
+lithium_niobate_optical_x = TidyMaterial(
+    name="LiNbO3",
+    variant="Zelmon1997",
+    optical_axis="x",
+    meta={"color": (0.9, 0.6, 0.1, 0.9)},
+)
+lithium_niobate_optical_y = TidyMaterial(
+    name="LiNbO3",
+    variant="Zelmon1997",
+    optical_axis="y",
+    meta={"color": (0.9, 0.6, 0.1, 0.9)},
+)
+lithium_niobate_optical_z = TidyMaterial(
+    name="LiNbO3",
+    variant="Zelmon1997",
+    optical_axis="z",
+    meta={"color": (0.9, 0.6, 0.1, 0.9)},
+)
+
+indium_phosphide_sellmeier_coefficients = {
+    "A": 7.255,
+    "B": (2.316, 2.765),
+    "C": (0.6263**2, 32.935**2),
+}
+
+indium_phosphide = DispersiveMaterial(
+    name="InP",
+    dispersion_model=SellmeierModel(
+        wavelength_lower_limit=0.95,
+        wavelength_upper_limit=10,
+        **indium_phosphide_sellmeier_coefficients,
+    ),
+    meta={"color": (0.7, 0.7, 0.3, 0.9)},
+)
+
+aluminum_nitride_sellmeier_coefficients_ordinary = {
+    "A": 3.1399,
+    "B": (1.3786, 3.861),
+    "C": (0.1715**2, 15.03**2),
+}
+aluminum_nitride_sellmeier_coefficients_extraordinary = {
+    "A": 3.0729,
+    "B": (1.6173, 4.139),
+    "C": (0.1746**2, 15.03**2),
+}
+aluminum_nitride_sellmeier_validity_range = {
+    "wavelength_lower_limit": 0.22,
+    "wavelength_upper_limit": 5.0,
+}
+
+aluminum_nitride_optical_x = UniaxialDispersiveMaterial(
+    name="AlN",
+    ordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_ordinary,
+        **aluminum_nitride_sellmeier_validity_range,
+    ),
+    extraordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_extraordinary,
+        **aluminum_nitride_sellmeier_validity_range,
+    ),
+    optical_axis="x",
+    meta={"color": (0.3, 0.7, 0.5, 0.9)},
+)
+"""Aluminum nitride with optical axis (axis associated with extraordinary index) along
+x. Refractive indices for ordinary and extraordinary axes are calculated from a
+Sellmeier model."""
+
+aluminum_nitride_optical_y = UniaxialDispersiveMaterial(
+    name="AlN",
+    ordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_ordinary,
+        **aluminum_nitride_sellmeier_validity_range,
+    ),
+    extraordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_extraordinary,
+        **aluminum_nitride_sellmeier_validity_range,
+    ),
+    optical_axis="y",
+    meta={"color": (0.3, 0.7, 0.5, 0.9)},
+)
+"""Aluminum nitride with optical axis (axis associated with extraordinary index) along
+y. Refractive indices for ordinary and extraordinary axes are calculated from a
+Sellmeier model."""
+
+aluminum_nitride_optical_z = UniaxialDispersiveMaterial(
+    name="AlN",
+    ordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_ordinary,
+        **aluminum_nitride_sellmeier_validity_range,
+    ),
+    extraordinary_dispersion_model=SellmeierModel(
+        **aluminum_nitride_sellmeier_coefficients_extraordinary,
+        **aluminum_nitride_sellmeier_validity_range,
+    ),
+    optical_axis="z",
+    meta={"color": (0.3, 0.7, 0.5, 0.9)},
+)
+"""Aluminum nitride with optical axis (axis associated with extraordinary index) along
+z. Refractive indices for ordinary and extraordinary axes are calculated from a
+Sellmeier model."""
+
+
+lithium_tantalate_optical_x = SampledUniaxialMaterial.from_path(
+    "lithium_tantalate",
+    optical_axis="x",
+    meta={"color": (0.2, 0.4, 0.9, 0.9)},
+)
+"""Lithium tantalate with the optical axis (axis associated with
+extraordinary index) along x axis.
+LiTaO3 data source (Table IV, hexagonal crystals, 0.45-4.0 um):
+Bond, W. L. "Measurement of the refractive indices of several crystals."
+Journal of Applied Physics 36.5 (1965): 1674-1677."""
+
+lithium_tantalate_optical_y = SampledUniaxialMaterial.from_path(
+    "lithium_tantalate",
+    optical_axis="y",
+    meta={"color": (0.2, 0.4, 0.9, 0.9)},
+)
+"""Lithium tantalate with the optical axis (axis associated with
+extraordinary index) along y axis.
+LiTaO3 data source (Table IV, hexagonal crystals, 0.45-4.0 um):
+Bond, W. L. "Measurement of the refractive indices of several crystals."
+Journal of Applied Physics 36.5 (1965): 1674-1677."""
+
+lithium_tantalate_optical_z = SampledUniaxialMaterial.from_path(
+    "lithium_tantalate",
+    optical_axis="z",
+    meta={"color": (0.2, 0.4, 0.9, 0.9)},
+)
+"""Lithium tantalate with the optical axis (axis associated with
+extraordinary index) along z axis.
+LiTaO3 data source (Table IV, hexagonal crystals, 0.45-4.0 um):
+Bond, W. L. "Measurement of the refractive indices of several crystals."
+Journal of Applied Physics 36.5 (1965): 1674-1677."""
+
+
+lithium_triborate = SampledAnisotropicMaterial.from_path(
+    "lithium_triborate",
+    axis_num_to_dir={1: "x", 2: "y", 3: "z"},
+    meta={"color": (0.6, 0.2, 0.8, 0.9)},
+)
+"""LiB3O5 (LBO) data source (Table 3, principal refractive indices n_x, n_y, n_z,
+0.2537-1.0642 um):
+Chen, Chuangtian, et al. "New nonlinear-optical crystal: LiB3O5."
+Journal of the Optical Society of America B 6.4 (1989): 616-621."""
+
+
+# KTP (KTiOPO4) is biaxial, with a different Sellmeier equation along each of x, y
+# and z. The paper writes each equation as n^2 = A + sum_i B_i / (wl^2 - C_i),
+# whereas SellmeierModel uses n^2 = A + sum_i B_i' wl^2 / (wl^2 - C_i). The two
+# are identical with B_i' = B_i / C_i and A' = A - sum_i B_i / C_i, since
+# B / (wl^2 - C) = (B / C) * (wl^2 / (wl^2 - C) - 1).
+ktp_sellmeier_coefficients_x = {
+    "A": 3.29100 - (0.04140 / 0.03978 + 9.35522 / 31.45571),
+    "B": (0.04140 / 0.03978, 9.35522 / 31.45571),
+    "C": (0.03978, 31.45571),
+}
+ktp_sellmeier_coefficients_y = {
+    "A": 3.45018 - (0.04341 / 0.04597 + 16.98825 / 39.43799),
+    "B": (0.04341 / 0.04597, 16.98825 / 39.43799),
+    "C": (0.04597, 39.43799),
+}
+ktp_sellmeier_coefficients_z = {
+    "A": 4.59423 - (0.06206 / 0.04763 + 110.80672 / 86.12171),
+    "B": (0.06206 / 0.04763, 110.80672 / 86.12171),
+    "C": (0.04763, 86.12171),
+}
+ktp_sellmeier_validity_range = {
+    "wavelength_lower_limit": 0.43,
+    "wavelength_upper_limit": 3.54,
+}
+
+ktp = AnisotropicDispersiveMaterial(
+    name="KTP",
+    dispersion_model_x=SellmeierModel(
+        **ktp_sellmeier_coefficients_x,
+        **ktp_sellmeier_validity_range,
+    ),
+    dispersion_model_y=SellmeierModel(
+        **ktp_sellmeier_coefficients_y,
+        **ktp_sellmeier_validity_range,
+    ),
+    dispersion_model_z=SellmeierModel(
+        **ktp_sellmeier_coefficients_z,
+        **ktp_sellmeier_validity_range,
+    ),
+    meta={"color": (0.4, 0.8, 0.8, 0.9)},
+)
+"""Potassium titanyl phosphate (KTP), a biaxial crystal, with refractive indices
+n_x, n_y, n_z from Sellmeier equations (valid from 0.43 to 3.54 um) fit to
+flux-grown crystals at 20 C. The Sellmeier equations ignore temperature.
+Kato, Kiyoshi, and Eiko Takaoka. "Sellmeier and thermo-optic dispersion formulas
+for KTP." Applied Optics 41.24 (2002): 5040-5044."""

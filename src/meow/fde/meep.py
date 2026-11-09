@@ -201,5 +201,5 @@ def meep_material(material: Material, env: Environment) -> tuple[float, Any]:
     """
     import meep as mp  # ty: ignore[unresolved-import]
 
-    n = complex(np.asarray(material(env)).reshape(-1)[0])
+    n = material(env)
     return n.real, mp.Medium(epsilon=n.real**2)
