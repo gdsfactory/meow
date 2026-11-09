@@ -10,7 +10,9 @@ import pytest
 import meow as mw
 
 visualize = False
-"""Set by `main(visualize=True)` so the equivalence tests plot their modes.
+"""Set True by `main()` so the equivalence tests plot their modes.
+
+Left False under pytest, so no figure is ever shown there.
 """
 
 
@@ -740,15 +742,15 @@ def _comparison_figure(
     return plt.subplots(3, 2, constrained_layout=True, **kwargs)  # ty: ignore[no-matching-overload]
 
 
-def main(visualize_modes: bool = False) -> None:  # noqa: FBT001, FBT002
-    """Run the discrete-vs-varying equivalence checks for manual inspection.
+def main() -> None:
+    """Run the discrete-vs-varying equivalence checks and show each plot.
 
-    Args:
-        visualize_modes: if True, set the module-level `visualize` flag so each
-            test plots the modes it computes.
+    Running `main()` means the user wants to inspect the modes, so the
+    module-level flag is turned on. Under pytest it stays False and no figure
+    is shown.
     """
     global visualize  # noqa: PLW0603
-    visualize = visualize_modes
+    visualize = True
 
     tests = [
         test_discrete_and_varying_agree_with_smoothing,
@@ -772,13 +774,4 @@ def main(visualize_modes: bool = False) -> None:  # noqa: FBT001, FBT002
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--visualize",
-        action="store_true",
-        help="show the modes computed by each test",
-    )
-    args = parser.parse_args()
-    main(visualize_modes=args.visualize)
+    main()

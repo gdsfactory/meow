@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import colors
 from matplotlib.axes import Axes
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pydantic import Field
 from scipy.constants import epsilon_0 as eps0
 from scipy.constants import mu_0 as mu0
@@ -308,9 +309,9 @@ class Mode(BaseModel):
         if mode_mappable is None:  # unreachable: checked at the top of the method
             msg = "No mode image or contours were drawn."
             raise RuntimeError(msg)
-        from meow.visualization import add_right_colorbar
-
-        add_right_colorbar(ax, mode_mappable)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        ax.figure.colorbar(mode_mappable, cax=cax)
         plt.sca(ax)
 
         # labels

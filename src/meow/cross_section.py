@@ -203,6 +203,7 @@ class CrossSection(BaseModel):
     ) -> None:
         import matplotlib.pyplot as plt  # fmt: skip
         from matplotlib import colors  # fmt: skip
+        from mpl_toolkits.axes_grid1 import make_axes_locatable  # fmt: skip
 
         debug_grid = ignored.pop("debug_grid", False)
         if n_cmap is None:
@@ -215,9 +216,7 @@ class CrossSection(BaseModel):
             ax = plt.gca()
         n_full = np.real(self.n_full(component=index_component)).copy()
         n_full[0, 0] = 1.0
-        mappable = plt.pcolormesh(
-            self.mesh.X_full, self.mesh.Y_full, n_full, cmap=n_cmap
-        )
+        plt.pcolormesh(self.mesh.X_full, self.mesh.Y_full, n_full, cmap=n_cmap)
         if not debug_grid:
             plt.grid(visible=True)
         else:
@@ -236,19 +235,23 @@ class CrossSection(BaseModel):
             plt.grid(visible=True, which="major", ls="-")
             plt.grid(visible=True, which="minor", ls=":")
         if cbar:
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="5%", pad=0.05)
+            _reserve_colorbar_label_space(ax)
+            # A discrete set of materials yields a handful of distinct indices,
+            # and ticking each one labels every material band. A spatially
+            # varying material yields thousands of distinct values, which would
+            # exceed matplotlib's tick limit, so evenly spaced ticks are used
+            # instead. Either way the count is then reduced to what the bar's
+            # height can actually label -- see `_thin_colorbar_ticks`.
             values = np.unique(np.real(n_full))
-            from meow.visualization import add_right_colorbar
-
-            _cbar = add_right_colorbar(ax, mappable, ticks=values)
-            # material_names = ['vacuum'] + [mat.name for mat in self.cell.materials]
-            # labels = [f"\n{n}\n{v:.3f}" for n, v in zip(material_names, values)]
-            labels = [f"{v:.3f}" for v in values]
-            _cbar.ax.set_yticklabels(labels, va="center")
+            if values.size <= _MAX_CBAR_TICKS:
+                _cbar = plt.colorbar(ticks=values, cax=cax)
+                _cbar.ax.set_yticklabels([f"{v:.3f}" for v in values], va="center")
+            else:
+                _cbar = plt.colorbar(cax=cax)
+            _thin_colorbar_ticks(_cbar)
             plt.sca(ax)
-        # Applied after the colorbar, as Mode._visualize does: adding a colorbar
-        # with ``ax=`` sets the parent axes' anchor to (1.0, 0.5), which pushes
-        # the plot off-centre inside its box. Calling ``axis("scaled")`` again
-        # resets the anchor to 'C', so panels in different rows stay aligned.
         plt.axis("scaled")
         if show:
             plt.show()
@@ -258,6 +261,62 @@ class CrossSection(BaseModel):
 
 _VACUUM_EPS = np.complex128(1.0) ** 2
 """Permittivity of the background (vacuum, n=1)."""
+
+_MAX_CBAR_TICKS = 32
+"""Above this many distinct indices, the colorbar uses evenly spaced ticks.
+
+A discrete-material cross-section has a few distinct indices and benefits from
+one tick per material. A spatially varying one has thousands, which would exceed
+matplotlib's tick limit; see `CrossSection._visualize`."""
+
+_CBAR_LABEL_PX = 16
+"""Vertical room, in pixels, to allow each colorbar tick label."""
+
+_CBAR_LABEL_MARGIN = 0.93
+"""Fraction of the layout width to use, leaving room for colorbar labels."""
+
+
+def _reserve_colorbar_label_space(ax: Any) -> None:
+    """Leave room at the figure's right edge for a colorbar's tick labels.
+
+    ``make_axes_locatable`` places its axes immediately right of the parent and
+    takes no account of the tick labels that then hang off *that*. Under
+    ``constrained_layout`` the parent is sized to fill the figure, so the bar
+    ends up flush with the right edge and its labels are drawn past it and
+    clipped. Narrowing the layout rectangle reserves the margin.
+    """
+    engine = ax.figure.get_layout_engine()
+    if engine is None:
+        return
+    options = engine.get()
+    if not options or "rect" not in options:
+        return
+    left, bottom, width, height = options["rect"]
+    engine.set(rect=(left, bottom, width * _CBAR_LABEL_MARGIN, height))
+
+
+def _thin_colorbar_ticks(_cbar: Any) -> None:
+    """Reduce a colorbar's ticks to as many as its height can label cleanly.
+
+    The default locator picks a round number of ticks (4, say) without regard to
+    the colorbar's size. These cross-sections are often thin strips -- a 1D
+    profile on a ``scaled`` axes fits in a few tens of pixels -- and the labels
+    then overlap into an unreadable smear. Explicit, evenly spaced ticks are
+    used because a ``MaxNLocator`` only treats a count as a hint.
+
+    The height is only known once the layout engine has run, so the work is
+    deferred to draw time; measuring it here would use the pre-layout size.
+    """
+
+    def _apply(_event: Any = None) -> None:
+        height_px = _cbar.ax.get_window_extent().height
+        count = max(2, int(height_px // _CBAR_LABEL_PX))
+        lower, upper = _cbar.ax.get_ylim()
+        ticks = np.linspace(lower, upper, count)
+        _cbar.ax.set_yticks(ticks)
+        _cbar.ax.set_yticklabels([f"{tick:g}" for tick in ticks], va="center")
+
+    _cbar.ax.figure.canvas.mpl_connect("draw_event", _apply)
 
 
 def _staggered_coords(
