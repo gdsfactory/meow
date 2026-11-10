@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import tidy3d as td
 from pydantic import Field, field_serializer, model_validator
+from pydantic.json_schema import GenerateJsonSchema as _GenerateJsonSchema
 from scipy.constants import c
 from scipy.ndimage import map_coordinates
 from tidy3d import material_library
@@ -23,6 +24,25 @@ from tidy3d.material_library.material_library import VariantItem, VariantItemUni
 from meow.arrays import Dim, DType, NDArray
 from meow.base_model import BaseModel
 from meow.environment import Environment
+
+
+class _CallableTolerantJsonSchema(_GenerateJsonSchema):
+    """A JSON-schema generator that tolerates `Callable` fields.
+
+    Pydantic's default raises `PydanticInvalidForJsonSchema` for a callable,
+    which makes a model carrying one impossible to introspect at all. Describing
+    it as an opaque string is accurate enough for schema discovery and keeps
+    `model_json_schema()` usable.
+    """
+
+    def callable_schema(self, schema: Any) -> Any:
+        """Describe a callable as an opaque string."""
+        del schema
+        return {
+            "type": "string",
+            "description": "a Python callable; not representable in JSON",
+        }
+
 
 ComponentType = Literal["x", "y", "z"]
 """Label representing a coordinate axis: 'x', 'y', or 'z'."""
@@ -509,6 +529,20 @@ class SpatiallyVaryingMaterial(MaterialBase):
         """
         func = self._callable_for(component)
         return np.asarray(func(x, y, z))
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Build a JSON schema that describes the callables as opaque strings.
+
+        Pydantic cannot build a schema for a `Callable` field and raises
+        `PydanticInvalidForJsonSchema`. That is unhelpful here: this model is
+        never serialized anyway (see `_serialize_callable`), yet callers walking
+        the public models -- `test_schemas.ipynb` does exactly that -- would hit
+        a hard error just for asking. Injecting a tolerant schema generator
+        keeps such introspection working.
+        """
+        kwargs.setdefault("schema_generator", _CallableTolerantJsonSchema)
+        return super().model_json_schema(*args, **kwargs)
 
     @field_serializer("n", "nx", "ny", "nz")
     def _serialize_callable(self, value: Callable[..., Any] | None) -> Any:
