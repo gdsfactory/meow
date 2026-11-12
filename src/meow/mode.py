@@ -17,6 +17,7 @@ from pydantic import Field
 from scipy.constants import epsilon_0 as eps0
 from scipy.constants import mu_0 as mu0
 
+from meow._colorbar import colorbar_axes
 from meow.arrays import Complex, ComplexArray2D, FloatArray2D
 from meow.base_model import BaseModel, cached_property
 from meow.cross_section import CrossSection
@@ -155,7 +156,7 @@ class Mode(BaseModel):
                     1,
                     len(fields),
                     figsize=(len(fields) * W, H),
-                    constrained_layout=True,
+                    layout="compressed",
                 )
             axes = _flatten_axes(ax)
             if len(axes) < len(fields):
@@ -208,17 +209,17 @@ class Mode(BaseModel):
             n_cmap (str | colors.LinearSegmentedColormap | None):
                 Maps refractive index to color. Defaults to None.
             draw_mode_contours (bool, optional): Whether to draw mode contours.
-                Defaults to True.
+                Defaults to False.
             mode_cmap (str, optional): Colormap for the mode, used for both the mode
                 image and the mode contours. Defaults to "rainbow".
             num_levels (int, optional): Number of contour levels for mode
                 contours. Defaults to 8.
             draw_mode_image (bool, optional): Whether to draw the mode as an image.
-                Defaults to False.
+                Defaults to True.
             mode_image_alpha (float, optional): Transparency of the mode image.
                 Defaults to 0.6.
             draw_structure_boundaries (bool, optional): Whether to draw lines around
-                structure boundaries. Defaults to False.
+                structure boundaries. Defaults to True.
             structure_boundaries_color (str | tuple[float, ...], optional):
                 Structure boundaries color. Defaults to "black".
         """
@@ -303,13 +304,12 @@ class Mode(BaseModel):
                     mode_mappable = contours
 
         # colorbar on right, explicitly for the mode (prefer the continuous image;
-        # it keeps the image's alpha so it matches what's drawn). Passing ax= lets
-        # the figure's layout engine (e.g. constrained layout) reserve its space.
+        # it keeps the image's alpha so it matches what's drawn).
 
         if mode_mappable is None:  # unreachable: checked at the top of the method
             msg = "No mode image or contours were drawn."
             raise RuntimeError(msg)
-        ax.figure.colorbar(mode_mappable, ax=ax, fraction=0.05, pad=0.02)
+        ax.figure.colorbar(mode_mappable, cax=colorbar_axes(ax))
         plt.sca(ax)
 
         # labels
