@@ -232,7 +232,7 @@ def _visualize_modes(
             sharex=True,
             sharey=True,
             squeeze=False,
-            constrained_layout=True,
+            layout="compressed",
         )
     else:
         _fig = None

@@ -1,4 +1,6 @@
+import itertools
 from collections.abc import Iterator
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -483,6 +485,101 @@ def test_cross_section_colorbar_ticks_spatially_varying():
     assert all(np.isclose(t / steps[0], round(t / steps[0])) for t in ticks)
 
 
+def _colorbar_axes_of(ax: plt.Axes) -> plt.Axes:
+    """The axes of the colorbar drawn for the data plotted on ``ax``."""
+    cbars = [artist.colorbar for artist in [*ax.collections, *ax.images]]
+    [cbar] = [c for c in cbars if c is not None]
+    return cbar.ax
+
+
+def _tight(artist: plt.Axes, renderer: object) -> Any:
+    """``artist``'s tight bounding box (tick labels included), in pixels."""
+    bbox = artist.get_tightbbox(renderer)  # ty: ignore[invalid-argument-type]
+    assert bbox is not None
+    return bbox
+
+
+def _assert_colorbars_fit(fig: plt.Figure, axs: list) -> None:
+    """Check each panel's colorbar against a constrained-layout row of panels.
+
+    The layout rect is untouched, each colorbar (tick labels included) ends
+    before the next panel begins, and the last one ends inside the figure.
+    """
+    fig.draw_without_rendering()
+    engine = fig.get_layout_engine()
+    assert engine is not None
+    assert engine.get()["rect"] == (0, 0, 1, 1)
+    renderer = fig.canvas.get_renderer()  # ty: ignore[unresolved-attribute]
+    for ax, next_ax in itertools.pairwise(axs):
+        cax = _colorbar_axes_of(ax)
+        assert _tight(cax, renderer).x1 <= _tight(next_ax, renderer).x0
+    cax = _colorbar_axes_of(axs[-1])
+    assert _tight(cax, renderer).x1 <= fig.bbox.x1
+
+
+# In the constrained-layout tests below, never show between panels: closing the
+# window destroys the figure's GUI canvas, and drawing the next panel into it
+# then fails. Draw every panel, check, then show once.
+
+
+def test_cross_section_colorbars_in_constrained_layout():
+    """Cross-section colorbars in a constrained-layout figure neither shrink the
+    layout nor collide with the neighbouring subplot.
+    """
+    xs = _layered_cross_section([1.444, 3.476])
+    fig, axs = plt.subplots(1, 4, figsize=(12, 3), layout="constrained")
+    for ax in axs:
+        mw.visualize(xs, ax=ax, show=False)
+    _assert_colorbars_fit(fig, list(axs))
+    if show:
+        plt.show()
+
+
+def test_cell_colorbars_in_constrained_layout():
+    """Cell colorbars, labelled with material names, fit in a constrained row.
+
+    Regression test: the names (e.g. 'vacuum') overlapped the next subplot.
+    """
+    xs = _layered_cross_section([1.444, 3.476])
+    cell = xs._cell
+    assert cell is not None
+    fig, axs = plt.subplots(1, 3, figsize=(10, 3), layout="constrained")
+    for ax in axs:
+        mw.visualize(cell, ax=ax, show=False)
+    _assert_colorbars_fit(fig, list(axs))
+    if show:
+        plt.show()
+
+
+def test_mode_colorbars_in_constrained_layout(modes_for_test: list[mw.Mode]):
+    """Mode field colorbars fit in a narrow constrained-layout row."""
+    fig, axs = plt.subplots(1, 3, figsize=(9, 2.6), layout="constrained")
+    mw.visualize(modes_for_test[0], fields=["Ex", "Hx", "Pz"], ax=axs, show=False)
+    _assert_colorbars_fit(fig, list(axs))
+    if show:
+        plt.show()
+
+
+def test_mode_grid_colorbar_labels_fit_on_first_draw(modes_for_test: list[mw.Mode]):
+    """meow's own grid of modes x fields keeps every colorbar label inside the
+    figure after a single draw (as in ``savefig``).
+
+    Regression test: with constrained layout, a grid of fixed-aspect plots
+    needed several draws to settle, so the right-hand colorbar labels were cut
+    off at the figure edge on the first one.
+    """
+    mw.visualize(modes_for_test, fields=["Ex", "Hy"], show=False)
+    fig = plt.gcf()
+    fig.draw_without_rendering()
+    renderer = fig.canvas.get_renderer()  # ty: ignore[unresolved-attribute]
+    for ax in fig.axes:
+        if ax.images or ax.collections:  # a field panel, not a colorbar
+            cax = _colorbar_axes_of(ax)
+            assert _tight(cax, renderer).x1 <= fig.bbox.x1
+    if show:
+        plt.show()
+
+
 if __name__ == "__main__":
     show = True  # show figures if running from command line
     modes = _compute_modes_for_test()
@@ -504,3 +601,7 @@ if __name__ == "__main__":
     test_cross_section_colorbar_ticks_each_material_index()
     test_cross_section_colorbar_ticks_keep_extremes_when_crowded()
     test_cross_section_colorbar_ticks_spatially_varying()
+    test_cross_section_colorbars_in_constrained_layout()
+    test_cell_colorbars_in_constrained_layout()
+    test_mode_colorbars_in_constrained_layout(modes)
+    test_mode_grid_colorbar_labels_fit_on_first_draw(modes)

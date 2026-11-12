@@ -6,10 +6,11 @@ from typing import Any, Self
 
 import numpy as np
 import shapely
-from matplotlib.ticker import FormatStrFormatter, Locator, MaxNLocator
+from matplotlib.ticker import FormatStrFormatter, MaxNLocator
 from pydantic import Field, PrivateAttr
 from shapely.ops import unary_union
 
+from meow._colorbar import MaterialIndexLocator, colorbar_axes
 from meow.arrays import ComplexArray2D, IntArray2D
 from meow.base_model import BaseModel, cached_property
 from meow.cell import (
@@ -204,7 +205,6 @@ class CrossSection(BaseModel):
     ) -> None:
         import matplotlib.pyplot as plt  # fmt: skip
         from matplotlib import colors  # fmt: skip
-        from mpl_toolkits.axes_grid1 import make_axes_locatable  # fmt: skip
 
         debug_grid = ignored.pop("debug_grid", False)
         if n_cmap is None:
@@ -236,10 +236,7 @@ class CrossSection(BaseModel):
             plt.grid(visible=True, which="major", ls="-")
             plt.grid(visible=True, which="minor", ls=":")
         if cbar:
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes("right", size="5%", pad=0.05)
-            _reserve_colorbar_label_space(ax)
-            _cbar = plt.colorbar(cax=cax)
+            _cbar = plt.colorbar(cax=colorbar_axes(ax))
             # Ticks are chosen at draw time, once the bar's height is known, so
             # the bar always fits the labels. With only constant materials,
             # tick each material's index; a spatially varying material yields a
@@ -247,7 +244,7 @@ class CrossSection(BaseModel):
             if any(_is_spatially_varying(m) for m in self.materials):
                 _cbar.locator = MaxNLocator(nbins="auto")
             else:
-                _cbar.locator = _MaterialIndexLocator(np.unique(n_full))
+                _cbar.locator = MaterialIndexLocator(np.unique(n_full))
                 _cbar.formatter = FormatStrFormatter("%.3f")
             _cbar.update_ticks()
             plt.sca(ax)
@@ -260,63 +257,6 @@ class CrossSection(BaseModel):
 
 _VACUUM_EPS = np.complex128(1.0) ** 2
 """Permittivity of the background (vacuum, n=1)."""
-
-_CBAR_LABEL_MARGIN = 0.93
-"""Fraction of the layout width to use, leaving room for colorbar labels."""
-
-
-def _reserve_colorbar_label_space(ax: Any) -> None:
-    """Leave room at the figure's right edge for a colorbar's tick labels.
-
-    ``make_axes_locatable`` places its axes immediately right of the parent and
-    takes no account of the tick labels that then hang off *that*. Under
-    ``constrained_layout`` the parent is sized to fill the figure, so the bar
-    ends up flush with the right edge and its labels are drawn past it and
-    clipped. Narrowing the layout rectangle reserves the margin.
-    """
-    engine = ax.figure.get_layout_engine()
-    if engine is None:
-        return
-    options = engine.get()
-    if not options or "rect" not in options:
-        return
-    left, bottom, width, height = options["rect"]
-    engine.set(rect=(left, bottom, width * _CBAR_LABEL_MARGIN, height))
-
-
-class _MaterialIndexLocator(Locator):
-    """Colorbar locator that ticks each material's index, as many as fit.
-
-    Matplotlib calls the locator at draw time, after layout, so the number of
-    ticks that fit (``axis.get_tick_space()``) reflects the bar's actual
-    height. The lowest and highest indices are always kept; the others are
-    kept, lowest first, if they are at least one label's height from every
-    tick kept so far. That drops indices too close to label separately (e.g.
-    1.444 and 1.45) and thins the ticks on a short bar.
-    """
-
-    def __init__(self, values: np.ndarray) -> None:
-        self.values = np.sort(np.asarray(values, dtype=float))
-
-    def __call__(self) -> list[float]:
-        """Return the tick positions for the current view."""
-        axis = self.axis
-        if axis is None:  # not attached to an axis yet
-            return self.values.tolist()
-        lo, hi = sorted(axis.get_view_interval())
-        values = self.values[(self.values >= lo) & (self.values <= hi)]
-        if values.size <= 1:
-            return values.tolist()
-        min_gap = (hi - lo) / max(axis.get_tick_space(), 1)
-        lowest, highest = values[0], values[-1]
-        if highest - lowest < min_gap:
-            return [lowest]
-        kept = [lowest]
-        for v in values[1:-1]:
-            if v - kept[-1] >= min_gap and highest - v >= min_gap:
-                kept.append(v)
-        kept.append(highest)
-        return kept
 
 
 def _staggered_coords(
