@@ -48,8 +48,8 @@ N_CLAD = 1.0  # clip, so the index stays physical outside |x| < a
 W_ANALYTIC = np.sqrt(A / (K0 * N0))
 
 # the profile is clipped to n_clad outside |x| = a, and the mode decays well
-# before that; a domain of +/- 3a leaves ample room
-DOMAIN = 3.0 * A
+# before that; a domain of +/- 1.5a leaves ample room
+DOMAIN = 1.5 * A
 
 
 def parabolic_index_1d(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:  # noqa: ARG001

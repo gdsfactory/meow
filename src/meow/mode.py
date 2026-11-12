@@ -209,17 +209,17 @@ class Mode(BaseModel):
             n_cmap (str | colors.LinearSegmentedColormap | None):
                 Maps refractive index to color. Defaults to None.
             draw_mode_contours (bool, optional): Whether to draw mode contours.
-                Defaults to True.
+                Defaults to False.
             mode_cmap (str, optional): Colormap for the mode, used for both the mode
                 image and the mode contours. Defaults to "rainbow".
             num_levels (int, optional): Number of contour levels for mode
                 contours. Defaults to 8.
             draw_mode_image (bool, optional): Whether to draw the mode as an image.
-                Defaults to False.
+                Defaults to True.
             mode_image_alpha (float, optional): Transparency of the mode image.
                 Defaults to 0.6.
             draw_structure_boundaries (bool, optional): Whether to draw lines around
-                structure boundaries. Defaults to False.
+                structure boundaries. Defaults to True.
             structure_boundaries_color (str | tuple[float, ...], optional):
                 Structure boundaries color. Defaults to "black".
         """
