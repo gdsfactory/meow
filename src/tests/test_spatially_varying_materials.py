@@ -249,9 +249,9 @@ def test_anisotropic_varying_components_differ() -> None:
     )
     cs = _cross_section(mat)
     # interior (away from the smoothed interface) holds the exact values
-    assert np.isclose(np.real(cs.n_full("x")).max(), 1.0)
-    assert np.isclose(np.real(cs.n_full("y")).max(), 2.0)
-    assert np.isclose(np.real(cs.n_full("z")).max(), 3.0)
+    assert np.real(cs.n_full("x")).max() == 1.0
+    assert np.real(cs.n_full("y")).max() == 2.0
+    assert np.real(cs.n_full("z")).max() == 3.0
 
 
 @pytest.mark.parametrize("subpixel_smoothing", [True, False])
@@ -272,17 +272,19 @@ def test_spatially_varying_boundary_is_smoothed(
     over a descending sort), so nesting one inside the other would erase it
     unless the inner one had a lower mesh_order.
     """
-    ramp = mw.SpatiallyVaryingMaterial(name="spatially_varying_const", n=_const(2.0))
+    ramp = mw.SpatiallyVaryingMaterial(
+        name="spatially_varying_const", n=_ramp(offset=2.0, slope=-0.1)
+    )
     fixed = mw.IndexMaterial(n=4.0, name="fixed")
     mesh = mw.Mesh2D(x=np.linspace(-1.0, 1.0, 41), y=np.linspace(-1.0, 1.0, 41))
     # The shared edge must fall *between* mesh points, otherwise no dual cell
     # straddles it and there is correctly nothing to smooth.
     structs = [
         mw.Structure3D(
-            material=ramp, geometry=_box(-0.6, 0.007, -1.0, 1.0), mesh_order=2
+            material=fixed, geometry=_box(-0.6, 0.007, -1.0, 1.0), mesh_order=1
         ),
         mw.Structure3D(
-            material=fixed, geometry=_box(0.007, 0.6, -1.0, 1.0), mesh_order=1
+            material=ramp, geometry=_box(0.007, 0.6, -1.0, 1.0), mesh_order=2
         ),
     ]
     cell = mw.Cell(structures=structs, mesh=mesh, z_min=0, z_max=1)
@@ -292,14 +294,49 @@ def test_spatially_varying_boundary_is_smoothed(
     # both materials are actually present (0 is the vacuum background)
     assert {1, 2} <= set(np.unique(cs._m_full))
     n = np.real(cs.nx)
-    between = ((n > 2.0 + 1e-9) & (n < 4.0 - 1e-9)).sum()
+    between = ((n > 2.0) & (n < 4.0)).sum()
     if subpixel_smoothing:
         assert between > 0, "expected blended values between n=2 and n=4"
     else:
         assert between == 0, "winner-takes-all must not blend"
     # the two bulk values are present either way
-    assert np.isclose(n[n >= 2.0 - 1e-9].min(), 2.0)
-    assert np.isclose(n.max(), 4.0)
+    assert ((n >= 1.99) & (n <= 2.01)).sum() > 0
+    assert n.max() == 4.0
+
+
+def test_winner_takes_all_varying_material_wins_pixel_rasterized_as_other() -> None:
+    """A varying material that wins a pixel gets its own sampled index there,
+    even when the rasterizer gave that pixel to another material.
+
+    Mesh nodes are at x, y = 0, 1, 2, 3, 4, so the Ez pixel at (2, 2) has dual
+    cell [1.5, 2.5] x [1.5, 2.5]. The varying material covers 70% of it
+    (x < 2.2); a constant material with a lower mesh order covers the other 30%.
+    Both overlap the pixel's rasterization cell, and the rasterizer lets the
+    lower mesh order overwrite, so it labels the pixel with the constant
+    material. With winner-takes-all the varying material wins, and the pixel
+    must hold its index sampled at (2, 2): 1.5 + 0.1 * 2 = 1.7.
+    """
+    varying = mw.SpatiallyVaryingMaterial(name="ramp", n=_ramp(1.5, 0.1))
+    other = mw.IndexMaterial(name="other", n=3.0)
+    structures = [
+        mw.Structure3D(
+            material=varying, geometry=_box(0.5, 2.2, 0.5, 3.5), mesh_order=2
+        ),
+        mw.Structure3D(material=other, geometry=_box(2.2, 3.5, 0.5, 3.5), mesh_order=1),
+    ]
+    cell = mw.Cell(
+        structures=structures,
+        mesh=mw.Mesh2D(x=np.linspace(0, 4, 5), y=np.linspace(0, 4, 5)),
+        z_min=0.0,
+        z_max=1.0,
+    )
+    cs = mw.CrossSection.from_cell(
+        cell=cell, env=mw.Environment(), subpixel_smoothing=False
+    )
+
+    # Ez (2, 2) is full-grid pixel (4, 4); rasterized as the constant material
+    assert cs._m_full[4, 4] == cs.materials[other]
+    assert np.isclose(np.real(cs.nz[2, 2]), 1.7)
 
 
 def test_varying_material_used_as_dict_key() -> None:
@@ -320,35 +357,39 @@ def _step_mesh() -> mw.Mesh2D:
     return mw.Mesh2D(x=np.linspace(-2.0, 2.0, 101), y=np.linspace(-1.5, 1.5, 101))
 
 
-def _step_index(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:  # noqa: ARG001
-    """Return 2, 4 or 3 depending on x, matching the three boxes below."""
-    return np.where(x < -0.5, 2.0, np.where(x < 0.5, 4.0, 3.0))
+def _step_index(junction: float) -> Callable[..., np.ndarray]:
+    """Return a callable giving 2, 4 or 3 depending on x, matching the boxes."""
+
+    def n(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:  # noqa: ARG001
+        return np.where(x < -junction, 2.0, np.where(x < junction, 4.0, 3.0))
+
+    return n
 
 
-def _three_structures(mesh: mw.Mesh2D, *, smooth: bool) -> mw.CrossSection:
-    """Three side-by-side boxes with constant indices 2, 4, 3."""
+def _three_structures(
+    mesh: mw.Mesh2D, *, smooth: bool, junction: float = 0.5, y_half: float = 1.0
+) -> mw.CrossSection:
+    """Three side-by-side boxes with constant indices 2, 4, 3.
+
+    The boxes meet at x = -junction and x = +junction and span |y| <= y_half.
+    """
+    x_edges = (-1.5, -junction, junction, 1.5)
     structures = [
         mw.Structure3D(
-            material=mw.IndexMaterial(n=2.0, name="n2"),
+            material=mw.IndexMaterial(n=n, name=f"n{n:g}"),
             geometry=mw.Box(
-                x_min=-1.5, x_max=-0.5, y_min=-1.0, y_max=1.0, z_min=-1.0, z_max=1.0
+                x_min=x_lo,
+                x_max=x_hi,
+                y_min=-y_half,
+                y_max=y_half,
+                z_min=-1.0,
+                z_max=1.0,
             ),
             mesh_order=2,
-        ),
-        mw.Structure3D(
-            material=mw.IndexMaterial(n=4.0, name="n3"),
-            geometry=mw.Box(
-                x_min=-0.5, x_max=0.5, y_min=-1.0, y_max=1.0, z_min=-1.0, z_max=1.0
-            ),
-            mesh_order=2,
-        ),
-        mw.Structure3D(
-            material=mw.IndexMaterial(n=3.0, name="n4"),
-            geometry=mw.Box(
-                x_min=0.5, x_max=1.5, y_min=-1.0, y_max=1.0, z_min=-1.0, z_max=1.0
-            ),
-            mesh_order=2,
-        ),
+        )
+        for n, (x_lo, x_hi) in zip(
+            (2.0, 4.0, 3.0), itertools.pairwise(x_edges), strict=True
+        )
     ]
     cell = mw.Cell(structures=structures, mesh=mesh, z_min=-1.0, z_max=1.0)
     return mw.CrossSection.from_cell(
@@ -356,13 +397,15 @@ def _three_structures(mesh: mw.Mesh2D, *, smooth: bool) -> mw.CrossSection:
     )
 
 
-def _varying(mesh: mw.Mesh2D, *, smooth: bool) -> mw.CrossSection:
+def _varying(
+    mesh: mw.Mesh2D, *, smooth: bool, junction: float = 0.5, y_half: float = 1.0
+) -> mw.CrossSection:
     """One box whose index callable reproduces the three-column layout above."""
-    material = mw.SpatiallyVaryingMaterial(name="stepped", n=_step_index)
+    material = mw.SpatiallyVaryingMaterial(name="stepped", n=_step_index(junction))
     structure = mw.Structure3D(
         material=material,
         geometry=mw.Box(
-            x_min=-1.5, x_max=1.5, y_min=-1.0, y_max=1.0, z_min=-1.0, z_max=1.0
+            x_min=-1.5, x_max=1.5, y_min=-y_half, y_max=y_half, z_min=-1.0, z_max=1.0
         ),
         mesh_order=2,
     )
@@ -416,12 +459,23 @@ def test_discrete_and_varying_bit_for_bit_without_smoothing() -> None:
     so the varying material -- which returns exactly the same indices as the
     three boxes -- produces an identical grid, and hence identical modes.
 
+    The geometry differs from the previous test in two ways, both to avoid a
+    pixel whose dual cell is split between boxes with no single box reaching
+    50% coverage. Winner-takes-all then picks the background (or breaks an
+    exact tie) for the boxes, while the single varying material wins the pixel
+    outright; see boundary_index_notes.md.
+
+    - The junctions sit at x = +-0.51, midway between full-grid points, not
+      on the grid at +-0.5.
+    - The boxes span the full y range of the domain, so no junction meets a
+      boundary with the background.
+
     Note the smoothing is deliberately OFF here. With it ON the two cannot be
     bit-identical, for the reason given in the previous test.
     """
     mesh = _step_mesh()
-    cs_three_boxes = _three_structures(mesh, smooth=False)
-    cs_varying = _varying(mesh, smooth=False)
+    cs_three_boxes = _three_structures(mesh, smooth=False, junction=0.51, y_half=1.5)
+    cs_varying = _varying(mesh, smooth=False, junction=0.51, y_half=1.5)
 
     assert np.array_equal(np.real(cs_three_boxes.nx), np.real(cs_varying.nx))
     assert np.array_equal(np.real(cs_three_boxes.ny), np.real(cs_varying.ny))
@@ -482,30 +536,52 @@ _X_EDGE_HI = 0.52
 _X_EDGES = (-1.48, _X_EDGE_LO, _X_EDGE_HI, 1.48)
 _Y_EDGES = (-1.02, _Y_EDGE_LO, _Y_EDGE_HI, 1.02)
 
-
-def _aniso_step_index_x(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:  # noqa: ARG001
-    """Return the X-profile values depending on x (half-open regions)."""
-    return np.where(
-        x < _X_EDGE_HI,
-        np.where(x < _X_EDGE_LO, _X_PROFILE[0], _X_PROFILE[1]),
-        _X_PROFILE[2],
-    )
-
-
-def _aniso_step_index_y(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:  # noqa: ARG001
-    """Return the Y-profile values depending on y (half-open regions)."""
-    return np.where(
-        y < _Y_EDGE_HI,
-        np.where(y < _Y_EDGE_LO, _Y_PROFILE[0], _Y_PROFILE[1]),
-        _Y_PROFILE[2],
-    )
+# Edges for the bit-for-bit test. The internal edges lie midway between
+# full-grid points (x_full has spacing 0.02 from -2.0, y_full 0.015 from -1.5),
+# and the outer edges are the domain bounds. Both choices avoid a pixel whose
+# dual cell is split between boxes with no single box reaching 50% coverage:
+# winner-takes-all then picks the background (or breaks an exact tie) for the
+# boxes, while the single varying material wins the pixel outright. See
+# boundary_index_notes.md.
+_X_EDGES_OFF_GRID = (-2.0, -0.51, 0.51, 2.0)
+_Y_EDGES_OFF_GRID = (-1.5, -0.5025, 0.5025, 1.5)
 
 
-def _aniso_boxes(mesh: mw.Mesh2D, *, smooth: bool) -> mw.CrossSection:
+def _aniso_step_index_x(x_edges: tuple[float, ...]) -> Callable[..., np.ndarray]:
+    """Return a callable giving the X-profile depending on x (half-open regions)."""
+    lo, hi = x_edges[1], x_edges[2]
+
+    def n(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:  # noqa: ARG001
+        return np.where(
+            x < hi, np.where(x < lo, _X_PROFILE[0], _X_PROFILE[1]), _X_PROFILE[2]
+        )
+
+    return n
+
+
+def _aniso_step_index_y(y_edges: tuple[float, ...]) -> Callable[..., np.ndarray]:
+    """Return a callable giving the Y-profile depending on y (half-open regions)."""
+    lo, hi = y_edges[1], y_edges[2]
+
+    def n(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:  # noqa: ARG001
+        return np.where(
+            y < hi, np.where(y < lo, _Y_PROFILE[0], _Y_PROFILE[1]), _Y_PROFILE[2]
+        )
+
+    return n
+
+
+def _aniso_boxes(
+    mesh: mw.Mesh2D,
+    *,
+    smooth: bool,
+    x_edges: tuple[float, ...] = _X_EDGES,
+    y_edges: tuple[float, ...] = _Y_EDGES,
+) -> mw.CrossSection:
     """A 3x3 grid of boxes with constant anisotropic indices."""
     structures = []
-    for i, (x_lo, x_hi) in enumerate(itertools.pairwise(_X_EDGES)):
-        for j, (y_lo, y_hi) in enumerate(itertools.pairwise(_Y_EDGES)):
+    for i, (x_lo, x_hi) in enumerate(itertools.pairwise(x_edges)):
+        for j, (y_lo, y_hi) in enumerate(itertools.pairwise(y_edges)):
             material = mw.AnisotropicIndexMaterial(
                 name=f"aniso_{i}{j}",
                 nx=_X_PROFILE[i],
@@ -532,21 +608,27 @@ def _aniso_boxes(mesh: mw.Mesh2D, *, smooth: bool) -> mw.CrossSection:
     )
 
 
-def _aniso_varying(mesh: mw.Mesh2D, *, smooth: bool) -> mw.CrossSection:
+def _aniso_varying(
+    mesh: mw.Mesh2D,
+    *,
+    smooth: bool,
+    x_edges: tuple[float, ...] = _X_EDGES,
+    y_edges: tuple[float, ...] = _Y_EDGES,
+) -> mw.CrossSection:
     """One box whose callables reproduce the 3x3 anisotropic layout."""
     material = mw.SpatiallyVaryingMaterial(
         name="aniso_stepped",
-        nx=_aniso_step_index_x,
-        ny=_aniso_step_index_y,
+        nx=_aniso_step_index_x(x_edges),
+        ny=_aniso_step_index_y(y_edges),
         nz=_const(_NZ),
     )
     structure = mw.Structure3D(
         material=material,
         geometry=mw.Box(
-            x_min=_X_EDGES[0],
-            x_max=_X_EDGES[-1],
-            y_min=_Y_EDGES[0],
-            y_max=_Y_EDGES[-1],
+            x_min=x_edges[0],
+            x_max=x_edges[-1],
+            y_min=y_edges[0],
+            y_max=y_edges[-1],
             z_min=-1.0,
             z_max=1.0,
         ),
@@ -618,8 +700,9 @@ def test_anisotropic_discrete_and_varying_bit_for_bit_without_smoothing() -> Non
     """With subpixel smoothing off, the biaxial descriptions are bit-for-bit
     identical."""
     mesh = _step_mesh()
-    cs_boxes = _aniso_boxes(mesh, smooth=False)
-    cs_varying = _aniso_varying(mesh, smooth=False)
+    edges = {"x_edges": _X_EDGES_OFF_GRID, "y_edges": _Y_EDGES_OFF_GRID}
+    cs_boxes = _aniso_boxes(mesh, smooth=False, **edges)
+    cs_varying = _aniso_varying(mesh, smooth=False, **edges)
 
     for component in ("x", "y", "z"):
         assert np.array_equal(

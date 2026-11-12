@@ -630,9 +630,6 @@ def _compute_winner_takes_all_n(
     si, sj = _COMPONENT_SLICES[component]
     m_comp = m_full[si, sj]
 
-    # Build eps array from material indices (start with non-interface values)
-    eps, mat_eps = _build_eps(mesh, m_comp, materials, env, component, z)
-
     # Identify interface pixels
     padded = np.pad(m_comp, 1, mode="edge")
     is_interface = (
@@ -643,6 +640,7 @@ def _compute_winner_takes_all_n(
     )
 
     if not np.any(is_interface):
+        eps, _ = _build_eps(mesh, m_comp, materials, env, component, z)
         return np.sqrt(eps)
 
     # Compute dual cell bounds and interface pixel indices
@@ -692,18 +690,12 @@ def _compute_winner_takes_all_n(
     below_threshold = best_frac < 0.5
     best_idx[below_threshold] = 0
 
-    # Assign the winner's permittivity. For a constant material that is its
-    # scalar eps; for the background and for a spatially varying material it is
-    # the value sampled at this pixel.
-    for idx, e_const in mat_eps.items():
-        if idx == 0:
-            continue
-        sel = best_idx == idx
-        if np.any(sel):
-            eps[ii[sel], jj[sel]] = e_const
-    # Pixels whose winner is a spatially varying material already hold their
-    # locally sampled value in `eps`, so nothing further is needed for them.
-
+    # Relabel each interface pixel with its winner, then build eps from the
+    # labels. The rasterizer's label and the winner can differ (in either
+    # direction, background included), so the label must be overwritten.
+    m_comp = m_comp.copy()
+    m_comp[ii, jj] = best_idx
+    eps, _ = _build_eps(mesh, m_comp, materials, env, component, z)
     return np.sqrt(eps)
 
 
