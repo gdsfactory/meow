@@ -98,6 +98,7 @@ class Cell(BaseModel):
             vmin=0,
             vmax=len(self.materials) + 1,
         )
+        plt.axis("scaled")
         plt.grid(visible=True)
         if cbar:
             labels = ["vacuum"]
@@ -109,7 +110,6 @@ class Cell(BaseModel):
             _cbar = plt.colorbar(ticks=ticks, cax=colorbar_axes(ax))
             _cbar.ax.set_yticklabels(labels, va="center")
             plt.sca(ax)
-        plt.axis("scaled")
         if show:
             plt.show()
 

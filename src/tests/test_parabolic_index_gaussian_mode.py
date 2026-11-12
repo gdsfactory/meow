@@ -229,13 +229,13 @@ def test_2d_parabolic_index_gives_2d_gaussian_mode() -> None:
         plt.savefig("test_2d_parabolic_index_gives_2d_gaussian_mode.png")
         plt.show()
 
-        # a slice through the centre of the mode, along x
-        centre = field.shape[1] // 2
+        # a slice through the center of the mode, along x
+        center = field.shape[1] // 2
         _plot_slice_vs_gaussian(
-            x_grid[:, centre],
-            field[:, centre],
+            x_grid[:, center],
+            field[:, center],
             W_ANALYTIC,
-            title="2D parabola (centre row)",
+            title="2D parabola (center row)",
         )
 
     expected = np.exp(-(x_grid**2 + y_grid**2) / (2 * W_ANALYTIC**2))

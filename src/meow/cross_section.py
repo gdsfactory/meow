@@ -218,6 +218,7 @@ class CrossSection(BaseModel):
         n_full = np.real(self.n_full(component=index_component)).copy()
         n_full[0, 0] = 1.0
         plt.pcolormesh(self.mesh.X_full, self.mesh.Y_full, n_full, cmap=n_cmap)
+        plt.axis("scaled")
         if not debug_grid:
             plt.grid(visible=True)
         else:
@@ -248,7 +249,6 @@ class CrossSection(BaseModel):
                 _cbar.formatter = FormatStrFormatter("%.3f")
             _cbar.update_ticks()
             plt.sca(ax)
-        plt.axis("scaled")
         if show:
             plt.show()
 
