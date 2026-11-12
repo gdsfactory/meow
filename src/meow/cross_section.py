@@ -6,6 +6,7 @@ from typing import Any, Self
 
 import numpy as np
 import shapely
+from matplotlib.ticker import FormatStrFormatter, Locator, MaxNLocator
 from pydantic import Field, PrivateAttr
 from shapely.ops import unary_union
 
@@ -238,19 +239,17 @@ class CrossSection(BaseModel):
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad=0.05)
             _reserve_colorbar_label_space(ax)
-            # A discrete set of materials yields a handful of distinct indices,
-            # and ticking each one labels every material band. A spatially
-            # varying material yields thousands of distinct values, which would
-            # exceed matplotlib's tick limit, so evenly spaced ticks are used
-            # instead. Either way the count is then reduced to what the bar's
-            # height can actually label -- see `_thin_colorbar_ticks`.
-            values = np.unique(np.real(n_full))
-            if values.size <= _MAX_CBAR_TICKS:
-                _cbar = plt.colorbar(ticks=values, cax=cax)
-                _cbar.ax.set_yticklabels([f"{v:.3f}" for v in values], va="center")
+            _cbar = plt.colorbar(cax=cax)
+            # Ticks are chosen at draw time, once the bar's height is known, so
+            # the bar always fits the labels. With only constant materials,
+            # tick each material's index; a spatially varying material yields a
+            # continuum of indices, so use round, evenly spaced values instead.
+            if any(_is_spatially_varying(m) for m in self.materials):
+                _cbar.locator = MaxNLocator(nbins="auto")
             else:
-                _cbar = plt.colorbar(cax=cax)
-            _thin_colorbar_ticks(_cbar)
+                _cbar.locator = _MaterialIndexLocator(np.unique(n_full))
+                _cbar.formatter = FormatStrFormatter("%.3f")
+            _cbar.update_ticks()
             plt.sca(ax)
         plt.axis("scaled")
         if show:
@@ -261,16 +260,6 @@ class CrossSection(BaseModel):
 
 _VACUUM_EPS = np.complex128(1.0) ** 2
 """Permittivity of the background (vacuum, n=1)."""
-
-_MAX_CBAR_TICKS = 32
-"""Above this many distinct indices, the colorbar uses evenly spaced ticks.
-
-A discrete-material cross-section has a few distinct indices and benefits from
-one tick per material. A spatially varying one has thousands, which would exceed
-matplotlib's tick limit; see `CrossSection._visualize`."""
-
-_CBAR_LABEL_PX = 16
-"""Vertical room, in pixels, to allow each colorbar tick label."""
 
 _CBAR_LABEL_MARGIN = 0.93
 """Fraction of the layout width to use, leaving room for colorbar labels."""
@@ -295,28 +284,39 @@ def _reserve_colorbar_label_space(ax: Any) -> None:
     engine.set(rect=(left, bottom, width * _CBAR_LABEL_MARGIN, height))
 
 
-def _thin_colorbar_ticks(_cbar: Any) -> None:
-    """Reduce a colorbar's ticks to as many as its height can label cleanly.
+class _MaterialIndexLocator(Locator):
+    """Colorbar locator that ticks each material's index, as many as fit.
 
-    The default locator picks a round number of ticks (4, say) without regard to
-    the colorbar's size. These cross-sections are often thin strips -- a 1D
-    profile on a ``scaled`` axes fits in a few tens of pixels -- and the labels
-    then overlap into an unreadable smear. Explicit, evenly spaced ticks are
-    used because a ``MaxNLocator`` only treats a count as a hint.
-
-    The height is only known once the layout engine has run, so the work is
-    deferred to draw time; measuring it here would use the pre-layout size.
+    Matplotlib calls the locator at draw time, after layout, so the number of
+    ticks that fit (``axis.get_tick_space()``) reflects the bar's actual
+    height. The lowest and highest indices are always kept; the others are
+    kept, lowest first, if they are at least one label's height from every
+    tick kept so far. That drops indices too close to label separately (e.g.
+    1.444 and 1.45) and thins the ticks on a short bar.
     """
 
-    def _apply(_event: Any = None) -> None:
-        height_px = _cbar.ax.get_window_extent().height
-        count = max(2, int(height_px // _CBAR_LABEL_PX))
-        lower, upper = _cbar.ax.get_ylim()
-        ticks = np.linspace(lower, upper, count)
-        _cbar.ax.set_yticks(ticks)
-        _cbar.ax.set_yticklabels([f"{tick:g}" for tick in ticks], va="center")
+    def __init__(self, values: np.ndarray) -> None:
+        self.values = np.sort(np.asarray(values, dtype=float))
 
-    _cbar.ax.figure.canvas.mpl_connect("draw_event", _apply)
+    def __call__(self) -> list[float]:
+        """Return the tick positions for the current view."""
+        axis = self.axis
+        if axis is None:  # not attached to an axis yet
+            return self.values.tolist()
+        lo, hi = sorted(axis.get_view_interval())
+        values = self.values[(self.values >= lo) & (self.values <= hi)]
+        if values.size <= 1:
+            return values.tolist()
+        min_gap = (hi - lo) / max(axis.get_tick_space(), 1)
+        lowest, highest = values[0], values[-1]
+        if highest - lowest < min_gap:
+            return [lowest]
+        kept = [lowest]
+        for v in values[1:-1]:
+            if v - kept[-1] >= min_gap and highest - v >= min_gap:
+                kept.append(v)
+        kept.append(highest)
+        return kept
 
 
 def _staggered_coords(

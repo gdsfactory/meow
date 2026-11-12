@@ -387,6 +387,102 @@ def test_mode_draw_structure_boundaries():
     )
 
 
+def _layered_cross_section(indices: list[float]) -> mw.CrossSection:
+    """Horizontal layers of constant-index materials stacked in y, in vacuum."""
+    structures = [
+        mw.Structure(
+            material=mw.IndexMaterial(name=f"layer{i}", n=n),
+            geometry=mw.Box(
+                x_min=-1,
+                x_max=1,
+                y_min=-1 + 0.3 * i,
+                y_max=-0.7 + 0.3 * i,
+                z_min=-1,
+                z_max=1,
+            ),
+        )
+        for i, n in enumerate(indices)
+    ]
+    cell = mw.Cell(
+        structures=structures,
+        z_min=-1,
+        z_max=1,
+        mesh=mw.Mesh2D(x=np.linspace(-1.5, 1.5, 61), y=np.linspace(-1.5, 1.5, 61)),
+    )
+    return mw.CrossSection.from_cell(cell=cell, env=mw.Environment())
+
+
+def _colorbar_ticks(fig: plt.Figure) -> tuple[list[float], list[str]]:
+    """Draw the figure and return its colorbar's tick positions and labels."""
+    # Not `fig.canvas.draw()`: when run with `show = True`, closing the window
+    # makes the figure go stale and getting ticks fails.
+    fig.draw_without_rendering()
+    # Drawing must leave the figure clean; ticks changed during a draw mark it
+    # stale and trigger another redraw. Checked before reading the labels:
+    # get_yticklabels() itself marks it stale.
+    assert not fig.stale
+    cax = fig.axes[-1]  # the colorbar axes is appended last
+    labels = [label.get_text() for label in cax.get_yticklabels()]
+    return list(cax.get_yticks()), labels
+
+
+def test_cross_section_colorbar_ticks_each_material_index():
+    """The colorbar ticks each material's index, and keeps doing so on redraw."""
+    xs = _layered_cross_section([1.444, 3.476])
+    fig, ax = plt.subplots(figsize=(6, 6))
+    mw.visualize(xs, ax=ax, show=show)
+
+    for _ in range(2):  # the first draw used to replace the ticks
+        ticks, labels = _colorbar_ticks(fig)
+        np.testing.assert_allclose(ticks, [1.0, 1.444, 3.476])
+        assert labels == ["1.000", "1.444", "3.476"]
+
+
+def test_cross_section_colorbar_ticks_keep_extremes_when_crowded():
+    """On a short colorbar with close indices, ticks are thinned but the lowest
+    and highest indices are always kept."""
+    indices = [1.44, 1.45, 1.46, 1.47, 2.0, 3.47, 3.48]
+    xs = _layered_cross_section(indices)
+    fig, ax = plt.subplots(figsize=(3, 1.5))
+    mw.visualize(xs, ax=ax, show=show)
+
+    ticks, _ = _colorbar_ticks(fig)
+    all_values = [1.0, *indices]
+    assert ticks[0] == pytest.approx(min(all_values))
+    assert ticks[-1] == pytest.approx(max(all_values))
+    assert len(ticks) < len(all_values)
+    assert all(any(np.isclose(t, v) for v in all_values) for t in ticks)
+
+
+def test_cross_section_colorbar_ticks_spatially_varying():
+    """A spatially varying material gives round, evenly spaced ticks, not one
+    per distinct index."""
+    material = mw.SpatiallyVaryingMaterial(
+        name="ramp",
+        n=lambda x, y, z: 2.0 + 0.5 * x,  # noqa: ARG005
+    )
+    structure = mw.Structure(
+        material=material,
+        geometry=mw.Box(x_min=-1, x_max=1, y_min=-1, y_max=1, z_min=-1, z_max=1),
+    )
+    cell = mw.Cell(
+        structures=[structure],
+        z_min=-1,
+        z_max=1,
+        mesh=mw.Mesh2D(x=np.linspace(-1.5, 1.5, 61), y=np.linspace(-1.5, 1.5, 61)),
+    )
+    xs = mw.CrossSection.from_cell(cell=cell, env=mw.Environment())
+    fig, ax = plt.subplots(figsize=(6, 6))
+    mw.visualize(xs, ax=ax, show=show)
+
+    ticks, _ = _colorbar_ticks(fig)
+    steps = np.diff(ticks)
+    assert 2 <= len(ticks) <= 12
+    np.testing.assert_allclose(steps, steps[0])  # evenly spaced
+    # round values: every tick is a multiple of the step
+    assert all(np.isclose(t / steps[0], round(t / steps[0])) for t in ticks)
+
+
 if __name__ == "__main__":
     show = True  # show figures if running from command line
     modes = _compute_modes_for_test()
@@ -405,3 +501,6 @@ if __name__ == "__main__":
     )
     test_multiple_modes_visualization(modes, fields=["Ex", "Hx", "Pz"])
     test_mode_draw_structure_boundaries()
+    test_cross_section_colorbar_ticks_each_material_index()
+    test_cross_section_colorbar_ticks_keep_extremes_when_crowded()
+    test_cross_section_colorbar_ticks_spatially_varying()
