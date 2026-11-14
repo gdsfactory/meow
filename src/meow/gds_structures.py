@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sys
+from typing import Any
+
 import gdsfactory
 import numpy as np
 import shapely.geometry as sg
@@ -107,6 +110,48 @@ def extrude_gdsf_component(
                 for extrusion in extrusions[layer]  # ty: ignore[invalid-argument-type]
             )
     return structures
+
+
+def extrude_gds(
+    cell: Any,
+    extrusions: dict[tuple[int, int], list[GdsExtrusionRule]],
+) -> list[Structure3D]:
+    """Extrude a GDS cell.
+
+    Accepts a :class:`gdsfactory.Component`, a :class:`gdspy.Cell` or a
+    :class:`gdstk.Cell` and forwards to the matching ``extrude_*``
+    function.\
+
+    Args:
+        cell: a gdsfactory Component, gdspy Cell or gdstk Cell to extrude.
+        extrusions: the extrusion rules to use.
+
+    Returns:
+        A list of Structure3D objects created from the extruded polygons.
+
+    Raises:
+        TypeError: if ``cell`` is not one of the supported cell types.
+    """
+    # Look the types up in ``sys.modules`` instead of importing them: a
+    # cell of a given type can only exist if its library is already
+    # imported, so this is safe and avoids costly imports to check type.
+    gdsfactory_module = sys.modules.get("gdsfactory")
+    if gdsfactory_module is not None and isinstance(cell, gdsfactory_module.Component):
+        return extrude_gdsf_component(cell, extrusions)
+
+    gdspy_module = sys.modules.get("gdspy")
+    if gdspy_module is not None and isinstance(cell, gdspy_module.Cell):
+        return extrude_gdspy_cell(cell, extrusions)
+
+    gdstk_module = sys.modules.get("gdstk")
+    if gdstk_module is not None and isinstance(cell, gdstk_module.Cell):
+        return extrude_gdstk_cell(cell, extrusions)
+
+    msg = (
+        "cell must be a gdsfactory.Component, gdspy.Cell or gdstk.Cell, "
+        f"got {type(cell)}"
+    )
+    raise TypeError(msg)
 
 
 def extrude_gdspy_cell(
