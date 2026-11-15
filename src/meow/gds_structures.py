@@ -37,8 +37,12 @@ class GdsExtrusionRule(BaseModel):
         default=5, description="the mesh order of the resulting `Structure3D`"
     )
 
-    def __call__(self, poly: FloatArray2D) -> Structure3D:
-        """Apply the extrusion rule to a polygon."""
+    def __call__(self, poly: FloatArray2D) -> list[Structure3D]:
+        """Apply the extrusion rule to a polygon.
+
+        Returns:
+            One `Structure3D` per connected part of the buffered polygon.
+        """
         # make_valid heals holes by turning one polygon that traces holes and returns
         # back to outer boudary, into outer boundary polygon with separate hole objects
         shapely_polygon = make_valid(sg.Polygon(poly))
@@ -52,26 +56,32 @@ class GdsExtrusionRule(BaseModel):
         # scans in `Prism._project_axis_*` report spurious extra pieces.
         # Keep the rings separate instead, so the holes stay holes.
         #
-        # `buffer()` can return a MultiPolygon (e.g. a thin buffer splitting a
-        # shape in two); only the largest part is representable by a single
-        # `Prism`, so keep that one.
-        if isinstance(buffered_polygon, sg.MultiPolygon):
-            buffered_polygon = max(buffered_polygon.geoms, key=lambda g: g.area)
-
-        return Structure3D(
-            material=self.material,
-            geometry=Prism(
-                poly=np.asarray(buffered_polygon.exterior.coords),
-                interiors=[
-                    np.asarray(interior.coords)
-                    for interior in buffered_polygon.interiors
-                ],
-                h_min=self.h_min,
-                h_max=self.h_max,
-                axis="y",
-            ),
-            mesh_order=self.mesh_order,
+        # A negative buffer can pinch a shape apart, in which case `buffer()`
+        # returns a MultiPolygon. Each part is disconnected from the others and
+        # so cannot share a single `Prism`; emit one structure per part rather
+        # than silently dropping any of them.
+        parts = (
+            list(buffered_polygon.geoms)
+            if isinstance(buffered_polygon, sg.MultiPolygon)
+            else [buffered_polygon]
         )
+
+        return [
+            Structure3D(
+                material=self.material,
+                geometry=Prism(
+                    poly=np.asarray(part.exterior.coords),
+                    interiors=[
+                        np.asarray(interior.coords) for interior in part.interiors
+                    ],
+                    h_min=self.h_min,
+                    h_max=self.h_max,
+                    axis="y",
+                ),
+                mesh_order=self.mesh_order,
+            )
+            for part in parts
+        ]
 
 
 # Frequenct linter and type checker ignores in following methods are becaues
@@ -157,10 +167,10 @@ def extrude_gdsf_component(
                 )
 
             polygon_points *= component.layout().dbu
-            structures.extend(
-                extrusion(polygon_points)  # ty: ignore[invalid-argument-type]
-                for extrusion in extrusions[layer]  # ty: ignore[invalid-argument-type]
-            )
+            for extrusion in extrusions[layer]:  # ty: ignore[invalid-argument-type]
+                # a rule can yield several parts (e.g. a negative buffer
+                # splitting the polygon), so extend instead of append
+                structures.extend(extrusion(polygon_points))  # ty: ignore[invalid-argument-type]
     return structures
 
 
@@ -181,7 +191,8 @@ def extrude_gdspy_cell(
     for layer, extrusion_rules in extrusions.items():
         polygons = cell.get_polygons(by_spec=layer)
         for extrusion_rule in extrusion_rules:
-            structures.extend(extrusion_rule(polygon) for polygon in polygons)
+            for polygon in polygons:
+                structures.extend(extrusion_rule(polygon))
 
     return structures
 
@@ -203,7 +214,8 @@ def extrude_gdstk_cell(
     for layer, extrusion_rules in extrusions.items():
         polygons = cell.get_polygons(layer=layer[0], datatype=layer[1])
         for extrusion_rule in extrusion_rules:
-            structures.extend(extrusion_rule(polygon.points) for polygon in polygons)
+            for polygon in polygons:
+                structures.extend(extrusion_rule(polygon.points))
 
     return structures
 
