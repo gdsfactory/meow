@@ -228,7 +228,7 @@ def test_gdsf_extrusion_two_rectangles():
     assert np.isclose(right_geometry.y_max, 1)
 
 
-def test_hole():
+def test_gdsf_hole():
     gf.gpdk.PDK.activate()
     component = gf.Component()
     component.add_polygon(

@@ -3,18 +3,27 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, TypeAlias
 
 import numpy as np
 import shapely.geometry as sg
 from pydantic import Field
-from shapely import make_valid
+from shapely import make_valid, unary_union
 
 from meow.arrays import FloatArray2D
 from meow.base_model import BaseModel
 from meow.geometries import Prism
 from meow.materials import Material
 from meow.structures import Structure3D
+
+# A polygon can reach an extrusion rule either as raw (N, 2) vertices or as an
+# already-built shapely polygon. The latter is what `extrude_gdsf_component`
+# produces, because that is the only representation that can carry holes.
+PolygonInput: TypeAlias = FloatArray2D | sg.Polygon
+"""A single polygon: ``(N, 2)`` vertex array, or a shapely polygon (may have holes)."""
+
+PolygonsInput: TypeAlias = PolygonInput | list[PolygonInput]
+"""One polygon or a list of them."""
 
 # TODO: Maybe it makes more sense to use native GDSFactory tooling for this
 
@@ -36,17 +45,29 @@ class GdsExtrusionRule(BaseModel):
         default=5, description="the mesh order of the resulting `Structure3D`"
     )
 
-    def __call__(self, poly: FloatArray2D) -> list[Structure3D]:
-        """Apply the extrusion rule to a polygon.
+    def __call__(self, polys: PolygonsInput) -> list[Structure3D]:
+        """Apply the extrusion rule to one or more polygons.
+
+        Args:
+            polys: a single polygon or a list of polygons. Each polygon is
+                either an ``(N, 2)`` vertex array or a shapely
+                :class:`~shapely.geometry.Polygon`. Shapely polygons are the
+                only representation that can carry holes, so they are what
+                :func:`extrude_gdsf_component` passes for gdsfactory >= 8.
 
         Returns:
             One `Structure3D` per connected part of the buffered polygon.
         """
-        # make_valid heals holes by turning one polygon that traces holes and returns
-        # back to outer boudary, into outer boundary polygon with separate hole objects
-        shapely_polygon = make_valid(sg.Polygon(poly))
+        if isinstance(polys, (np.ndarray, sg.base.BaseGeometry)):
+            polys = [polys]
 
-        buffered_polygon = shapely_polygon.buffer(self.buffer)
+        # make_valid heals holes, turning a polygon that traces a hole and
+        # returns back to the outer boundary into an outer boundary polygon
+        # with separate hole objects. It is a no-op for already-valid polygons,
+        # so passing shapely polygons through it is safe.
+        merged = unary_union([make_valid(_as_shapely(poly)) for poly in polys])
+
+        buffered_polygon = merged.buffer(self.buffer)
 
         # A negative buffer can pinch a shape apart, in which case `buffer()`
         # returns a MultiPolygon. Each part is disconnected from the others and
@@ -78,9 +99,57 @@ class GdsExtrusionRule(BaseModel):
         ]
 
 
-# Frequenct linter and type checker ignores in following methods are becaues
-# we are guarding against older versions of gdsfactory that have different
-# method signatures.
+def _as_shapely(poly: PolygonInput) -> sg.Polygon:
+    """Normalize a polygon given as raw vertices or as a shapely polygon.
+
+    Args:
+        poly: an ``(N, 2)`` vertex array, or an already-built shapely polygon.
+
+    Returns:
+        The shapely polygon. Passing an ``sg.Polygon`` through is a no-op, so
+        its interior (hole) rings are preserved.
+
+    Raises:
+        TypeError: if ``poly`` is neither an array-like nor a shapely polygon.
+    """
+    if isinstance(poly, sg.Polygon):
+        return poly
+    if isinstance(poly, sg.base.BaseGeometry):
+        # MultiPolygon / GeometryCollection etc. cannot be a single Prism
+        msg = (
+            f"expected a polygon, got {poly.geom_type}; pass its parts "
+            f"separately instead"
+        )
+        raise TypeError(msg)
+    return sg.Polygon(poly)
+
+
+def _polygon_to_shapely(polygon: Any, scale: float = 1.0) -> sg.Polygon:
+    """Convert a gdsfactory/klayout polygon to a shapely polygon, holes included.
+
+    A klayout polygon stores its outline in the *hull* and any cut-outs in
+    separate *hole* rings.
+
+    The loop must be bounded by ``polygon.holes()``: ``each_point_hole(index)``
+    does not bounds-check, so an out-of-range index reads out of bounds and
+    faults with SIGSEGV/SIGBUS from within klayout instead of raising. An
+    unguarded loop such as ``itertools.count()`` can therefore kill the
+    interpreter.
+
+    Args:
+        polygon: a klayout polygon as returned by ``Component.get_polygons``.
+        scale: factor applied to every coordinate (e.g. the layout database
+            unit, to convert database units to microns).
+
+    Returns:
+        The polygon with its interior rings attached.
+    """
+    shell = [(p.x * scale, p.y * scale) for p in polygon.each_point_hull()]
+    holes = [
+        [(p.x * scale, p.y * scale) for p in polygon.each_point_hole(index)]
+        for index in range(polygon.holes())
+    ]
+    return sg.Polygon(shell, holes)
 
 
 def extrude_gds(
@@ -139,38 +208,30 @@ def extrude_gdsf_component(
     Returns:
         A list of Structure3D objects created from the extruded polygons.
     """
-    import gdsfactory as gf
-
-    # flatten component. It may be cached, so we have to copy
-    flattened_component = gf.Component()
-    flattened_component << component
-    # flattened_component.flatten()
     structures = []
 
     if _get_major_gdsfactory_version() < 8:
-        polygons_dict = flattened_component.get_polygons(by_spec=True, as_array=True)  # ty: ignore[unknown-argument]
+        polygons_dict = component.get_polygons(by_spec=True, as_array=True)
     else:
-        polygons_dict = flattened_component.get_polygons(
+        polygons_dict = component.get_polygons(
             by="tuple",
-            layers=extrusions.keys(),  # ty: ignore[invalid-argument-type]
+            layers=extrusions.keys(),
         )
     for layer, polygons in polygons_dict.items():
+        if layer not in extrusions:
+            continue
+
+        dbu = component.layout().dbu
+        polygon_points = []
         for polygon in polygons:
-            if layer not in extrusions:
-                continue
-
             if _get_major_gdsfactory_version() < 8:
-                polygon_points = polygon
+                # pre-8 gdsfactory returns raw arrays, which cannot carry holes
+                polygon_points.append(np.asarray(polygon, dtype=float) * dbu)
             else:
-                polygon_points = np.array(
-                    [[p.x, p.y] for p in polygon.each_point_hull()], dtype=float
-                )
+                polygon_points.append(_polygon_to_shapely(polygon, dbu))
 
-            polygon_points *= flattened_component.layout().dbu
-            for extrusion in extrusions[layer]:  # ty: ignore[invalid-argument-type]
-                # a rule can yield several parts (e.g. a negative buffer
-                # splitting the polygon), so extend instead of append
-                structures.extend(extrusion(polygon_points))  # ty: ignore[invalid-argument-type]
+        for extrusion in extrusions[layer]:
+            structures.extend(extrusion(polygon_points))
     return structures
 
 
@@ -191,8 +252,7 @@ def extrude_gdspy_cell(
     for layer, extrusion_rules in extrusions.items():
         polygons = cell.get_polygons(by_spec=layer)
         for extrusion_rule in extrusion_rules:
-            for polygon in polygons:
-                structures.extend(extrusion_rule(polygon))
+            structures.extend(extrusion_rule(list(polygons)))
 
     return structures
 
@@ -214,8 +274,7 @@ def extrude_gdstk_cell(
     for layer, extrusion_rules in extrusions.items():
         polygons = cell.get_polygons(layer=layer[0], datatype=layer[1])
         for extrusion_rule in extrusion_rules:
-            for polygon in polygons:
-                structures.extend(extrusion_rule(polygon.points))
+            structures.extend(extrusion_rule([np.asarray(p.points) for p in polygons]))
 
     return structures
 
