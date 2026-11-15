@@ -18,6 +18,7 @@ custom_pdk.register_cells(compass=gf.components.compass)
 
 
 def test_gdsf_extrusion_builtin_pdk():
+    gf.clear_cache()
     gf.gpdk.PDK.activate()
 
     component = gf.Component()
@@ -37,6 +38,7 @@ def test_gdsf_extrusion_builtin_pdk():
 
 
 def test_gdsf_extrusion_custom_pdk():
+    gf.clear_cache()
     custom_pdk.activate()
 
     component = gf.Component()
@@ -57,6 +59,7 @@ def test_gdsf_extrusion_custom_pdk():
 
 @pytest.mark.parametrize("buffer", [0.1, -0.1])
 def test_gdsf_extrusion_buffer(buffer: float):
+    gf.clear_cache()
     gf.gpdk.PDK.activate()
 
     component = gf.Component()
@@ -88,6 +91,7 @@ def test_gdsf_extrusion_buffer(buffer: float):
 
 
 def test_gdsf_extrusion_multiple_rules():
+    gf.clear_cache()
     custom_pdk.activate()
 
     extrusion_rules = {
@@ -178,6 +182,7 @@ def test_gdsf_extrusion_multiple_rules():
 
 
 def test_gdsf_extrusion_two_rectangles():
+    gf.clear_cache()
     gf.gpdk.PDK.activate()
     component = gf.Component()
     component.add_polygon(
@@ -229,6 +234,7 @@ def test_gdsf_extrusion_two_rectangles():
 
 
 def test_gdsf_hole():
+    gf.clear_cache()
     gf.gpdk.PDK.activate()
     component = gf.Component()
     component.add_polygon(
@@ -316,6 +322,7 @@ def test_gdsf_hole():
 
 
 def test_gdsf_dumbell_pinched_apart():
+    gf.clear_cache()
     gf.gpdk.PDK.activate()
 
     dumbell = gf.Component()
@@ -582,3 +589,12 @@ def test_gdstk_hole():
         assert np.isclose(np.max(structure_right.geometry.x_max), +5 + buffer)
         assert np.isclose(np.min(structure_right.geometry.y_min), h_min)
         assert np.isclose(np.max(structure_right.geometry.y_max), h_min + 1)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def cleanup_global_state():
+    # Setup code (runs once before the first test in this file)
+    yield
+    # Teardown code (runs once after the last test in this file completes)
+    gf.clear_cache()
+    gf.gpdk.PDK.activate()  # reactivate for other tests
