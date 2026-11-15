@@ -262,6 +262,10 @@ class Prism(Geometry3DBase):
     poly: Annotated[NDArray, Shape(-1, 2), DType("float64")] = Field(
         description="the 2D array (Nx2) with polygon vertices"
     )
+    interiors: list[Annotated[NDArray, Shape(-1, 2), DType("float64")]] = Field(
+        default_factory=list,
+        description="hole rings (Nx2 vertex arrays) cut out of the polygon",
+    )
     h_min: float = Field(description="the start height of the extrusion")
     h_max: float = Field(description="the end height of the extrusion")
     axis: AxisDirection = Field(
@@ -269,11 +273,19 @@ class Prism(Geometry3DBase):
         description="axis along which the polygon will be extruded ('x', 'y', or 'z').",
     )
 
+    def _prism_polygon(self) -> sg.Polygon:
+        """Build the (possibly holed) shapely polygon for this prism."""
+        return sg.Polygon(
+            shell=self.poly, holes=[np.asarray(h) for h in self.interiors]
+        )
+
     def _project_axis_x(self, z: float) -> list[Geometry2DBase]:
         # x, y, z -> y, z, x
-        poly = sg.Polygon(self.poly)
-        y_min, _ = self.poly.min(0)
-        y_max, _ = self.poly.max(0)
+        poly = self._prism_polygon()
+        # Column 0 is y and column 1 is z here; scan across the polygon's own
+        # y-extent (which can differ from the pre-buffer outline after a
+        # positive/negative buffer).
+        y_min, y_max = self.poly[:, 0].min(), self.poly[:, 0].max()
         line = sg.LineString([(y_min, z), (y_max, z)])
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=RuntimeWarning, module="shapely")
@@ -304,9 +316,11 @@ class Prism(Geometry3DBase):
 
     def _project_axis_y(self, z: float) -> list[Geometry2DBase]:
         # x, y, z -> z, x, y
-        poly = sg.Polygon(self.poly)
-        _, x_min = self.poly.min(0)
-        _, x_max = self.poly.max(0)
+        poly = self._prism_polygon()
+        # x, y, z -> z, x, y: column 0 is z and column 1 is x, so scan across
+        # the polygon's own x-extent (which can differ from the pre-buffer
+        # outline after a positive/negative buffer).
+        x_min, x_max = self.poly[:, 1].min(), self.poly[:, 1].max()
         line = sg.LineString([(z, x_min), (z, x_max)])
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=RuntimeWarning, module="shapely")

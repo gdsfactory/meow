@@ -9,7 +9,7 @@ import gdsfactory
 import numpy as np
 import shapely.geometry as sg
 from pydantic import Field
-from shapely import get_coordinates, make_valid
+from shapely import make_valid
 
 from meow.arrays import FloatArray2D
 from meow.base_model import BaseModel
@@ -45,10 +45,27 @@ class GdsExtrusionRule(BaseModel):
 
         buffered_polygon = shapely_polygon.buffer(self.buffer)
 
+        # NOTE: `get_coordinates` flattens the exterior ring *and* every
+        # interior (hole) ring into one vertex array. Rebuilding a Prism from
+        # that concatenation produces a self-touching, invalid polygon (the
+        # hole ring is joined back onto the exterior ring), which makes the
+        # scans in `Prism._project_axis_*` report spurious extra pieces.
+        # Keep the rings separate instead, so the holes stay holes.
+        #
+        # `buffer()` can return a MultiPolygon (e.g. a thin buffer splitting a
+        # shape in two); only the largest part is representable by a single
+        # `Prism`, so keep that one.
+        if isinstance(buffered_polygon, sg.MultiPolygon):
+            buffered_polygon = max(buffered_polygon.geoms, key=lambda g: g.area)
+
         return Structure3D(
             material=self.material,
             geometry=Prism(
-                poly=get_coordinates(buffered_polygon),
+                poly=np.asarray(buffered_polygon.exterior.coords),
+                interiors=[
+                    np.asarray(interior.coords)
+                    for interior in buffered_polygon.interiors
+                ],
                 h_min=self.h_min,
                 h_max=self.h_max,
                 axis="y",
