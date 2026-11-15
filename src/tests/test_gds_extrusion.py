@@ -315,6 +315,51 @@ def test_hole():
         assert np.isclose(np.max(structure_right.geometry.y_max), h_min + 1)
 
 
+def test_gdsf_dumbell_pinched_apart():
+    gf.gpdk.PDK.activate()
+
+    dumbell = gf.Component()
+    left = dumbell << gf.components.rectangle(size=(4, 2), centered=True)
+    left.movey(-4)
+    right = dumbell << gf.components.rectangle(size=(4, 2), centered=True)
+    right.movey(4)
+    _bar = dumbell << gf.components.rectangle(size=(0.5, 6), centered=True)
+
+    extrusion_rules = {
+        (1, 0): [
+            mw.GdsExtrusionRule(material=mw.silicon, h_min=0, h_max=1, buffer=-0.5)
+        ]
+    }
+
+    structures = mw.extrude_gdsf_component(dumbell, extrusion_rules)
+    assert len(structures) == 2
+
+    cell = mw.Cell(
+        structures=structures,
+        z_min=-1,
+        z_max=1,
+        mesh=mw.Mesh2D(x=np.linspace(-6, 6, 51), y=np.linspace(-6, 6, 51)),
+    )
+    structure_left = (
+        cell.structures_2d[0]
+        if cell.structures_2d[0].geometry.x_min < cell.structures_2d[1].geometry.x_min
+        else cell.structures_2d[1]
+    )
+    structure_right = (
+        cell.structures_2d[1]
+        if structure_left is cell.structures_2d[0]
+        else cell.structures_2d[0]
+    )
+
+    assert np.isclose(structure_left.geometry.x_min, -5 + 0.5)
+
+    # there should be a little nub left over from buffering away dumbbell handlebar
+    assert -3.5 < structure_left.geometry.x_max < 3
+    assert 3 < structure_right.geometry.x_min < 3.5
+
+    assert np.isclose(structure_right.geometry.x_max, 5 - 0.5)
+
+
 def test_gdspy_extrusion_rectangle():
     import gdspy
 

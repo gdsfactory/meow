@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-import gdsfactory
 import numpy as np
 import shapely.geometry as sg
 from pydantic import Field
@@ -49,13 +48,6 @@ class GdsExtrusionRule(BaseModel):
 
         buffered_polygon = shapely_polygon.buffer(self.buffer)
 
-        # NOTE: `get_coordinates` flattens the exterior ring *and* every
-        # interior (hole) ring into one vertex array. Rebuilding a Prism from
-        # that concatenation produces a self-touching, invalid polygon (the
-        # hole ring is joined back onto the exterior ring), which makes the
-        # scans in `Prism._project_axis_*` report spurious extra pieces.
-        # Keep the rings separate instead, so the holes stay holes.
-        #
         # A negative buffer can pinch a shape apart, in which case `buffer()`
         # returns a MultiPolygon. Each part is disconnected from the others and
         # so cannot share a single `Prism`; emit one structure per part rather
@@ -81,6 +73,8 @@ class GdsExtrusionRule(BaseModel):
                 mesh_order=self.mesh_order,
             )
             for part in parts
+            if part.area > 0
+            # ensuring area > 0 removes parts that got shrunken down to 0 area by buffer
         ]
 
 
@@ -132,7 +126,7 @@ def extrude_gds(
 
 
 def extrude_gdsf_component(
-    component: gdsfactory.Component,
+    component: gdsfactory.Component,  # noqa: F821  # ty: ignore[unresolved-reference]
     extrusions: dict[tuple[int, int], list[GdsExtrusionRule]],
 ) -> list[Structure3D]:
     """Extrude a gdsfactory Component given a dictionary of extrusion rules.
@@ -145,12 +139,18 @@ def extrude_gdsf_component(
     Returns:
         A list of Structure3D objects created from the extruded polygons.
     """
+    import gdsfactory as gf
+
+    # flatten component. It may be cached, so we have to copy
+    flattened_component = gf.Component()
+    flattened_component << component
+    # flattened_component.flatten()
     structures = []
 
     if _get_major_gdsfactory_version() < 8:
-        polygons_dict = component.get_polygons(by_spec=True, as_array=True)  # ty: ignore[unknown-argument]
+        polygons_dict = flattened_component.get_polygons(by_spec=True, as_array=True)  # ty: ignore[unknown-argument]
     else:
-        polygons_dict = component.get_polygons(
+        polygons_dict = flattened_component.get_polygons(
             by="tuple",
             layers=extrusions.keys(),  # ty: ignore[invalid-argument-type]
         )
@@ -166,7 +166,7 @@ def extrude_gdsf_component(
                     [[p.x, p.y] for p in polygon.each_point_hull()], dtype=float
                 )
 
-            polygon_points *= component.layout().dbu
+            polygon_points *= flattened_component.layout().dbu
             for extrusion in extrusions[layer]:  # ty: ignore[invalid-argument-type]
                 # a rule can yield several parts (e.g. a negative buffer
                 # splitting the polygon), so extend instead of append
