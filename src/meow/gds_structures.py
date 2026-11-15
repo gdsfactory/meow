@@ -38,20 +38,8 @@ class GdsExtrusionRule(BaseModel):
 
     def __call__(self, poly: FloatArray2D) -> Structure3D:
         """Apply the extrusion rule to a polygon."""
-        if self.buffer > 0:
-            try:
-                poly = np.asarray(sg.Polygon(poly).buffer(self.buffer).boundary.coords)
-            except NotImplementedError as e:
-                import gdspy  # type: ignore[unresolved-import]
+        poly = np.asarray(sg.Polygon(poly).buffer(self.buffer).boundary.coords)
 
-                polygonset = gdspy.offset(gdspy.Polygon(poly), 0.25)
-                if polygonset is None:
-                    msg = (
-                        "The polygon could not be offset."
-                        "Please check the input polygon."
-                    )
-                    raise ValueError(msg) from e
-                poly = polygonset.polygons[0]
         return Structure3D(
             material=self.material,
             geometry=Prism(
