@@ -177,6 +177,57 @@ def test_gdsf_extrusion_multiple_rules():
     )
 
 
+def test_gdsf_extrusion_two_rectangles():
+    gf.gpdk.PDK.activate()
+    component = gf.Component()
+    component.add_polygon(
+        layer=(1, 0),
+        points=[(-1, -3), (+1, -3), (+1, -2), (-1, -2)],
+    )
+    component.add_polygon(
+        layer=(1, 0),
+        points=[(-1, +3), (+1, +3), (+1, +2), (-1, +2)],
+    )
+
+    extrusion_rules = {
+        (1, 0): [
+            mw.GdsExtrusionRule(
+                material=mw.silicon_oxide,
+                h_min=0,
+                h_max=1,
+            )
+        ]
+    }
+    structures = mw.extrude_gds(component, extrusions=extrusion_rules)
+    assert len(structures) == 2
+    cell = mw.Cell(
+        structures=structures,
+        z_min=-2,
+        z_max=+2,
+        mesh=mw.Mesh2D(x=np.linspace(-3, 3, 31), y=np.linspace(-3, 3, 31)),
+    )
+    structure_left = (
+        cell.structures_2d[0]
+        if cell.structures_2d[0].geometry.x_min < cell.structures_2d[1].geometry.x_min
+        else cell.structures_2d[1]
+    )
+    structure_right = (
+        cell.structures_2d[1]
+        if structure_left is cell.structures_2d[0]
+        else cell.structures_2d[0]
+    )
+    left_geometry: mw.Rectangle = structure_left.geometry
+    right_geometry: mw.Rectangle = structure_right.geometry
+    assert np.isclose(left_geometry.x_min, -3)
+    assert np.isclose(left_geometry.x_max, -2)
+    assert np.isclose(left_geometry.y_min, 0)
+    assert np.isclose(left_geometry.y_max, 1)
+    assert np.isclose(right_geometry.x_min, 2)
+    assert np.isclose(right_geometry.x_max, 3)
+    assert np.isclose(right_geometry.y_min, 0)
+    assert np.isclose(right_geometry.y_max, 1)
+
+
 def test_hole():
     gf.gpdk.PDK.activate()
     component = gf.Component()
@@ -262,3 +313,43 @@ def test_hole():
         assert np.isclose(np.max(structure_right.geometry.x_max), +5 + buffer)
         assert np.isclose(np.min(structure_right.geometry.y_min), h_min)
         assert np.isclose(np.max(structure_right.geometry.y_max), h_min + 1)
+
+
+def test_gdspy_extrusion_rectangle():
+    import gdspy
+
+    cell = gdspy.Cell("rectangle")
+    cell.add(gdspy.Rectangle((0.0, 0.0), (1.0, 2.0), layer=1, datatype=0))
+    rule = mw.GdsExtrusionRule(material=mw.silicon, h_min=0, h_max=1)
+
+    structures = mw.extrude_gdspy_cell(cell, {(1, 0): [rule]})
+
+    assert len(structures) == 1
+    assert structures[0].material == mw.silicon
+    assert isinstance(structures[0].geometry, mw.Prism)
+
+    poly = structures[0].geometry.poly
+    assert np.isclose(np.min(poly[:, 0]), 0.0)
+    assert np.isclose(np.max(poly[:, 0]), 1.0)
+    assert np.isclose(np.min(poly[:, 1]), 0.0)
+    assert np.isclose(np.max(poly[:, 1]), 2.0)
+
+
+def test_gdstk_extrusion_rectangle():
+    import gdstk
+
+    cell = gdstk.Cell("rectangle")
+    cell.add(gdstk.rectangle((0.0, 0.0), (1.0, 2.0), layer=1, datatype=0))
+    rule = mw.GdsExtrusionRule(material=mw.silicon, h_min=0, h_max=1)
+
+    structures = mw.extrude_gdstk_cell(cell, {(1, 0): [rule]})
+
+    assert len(structures) == 1
+    assert structures[0].material == mw.silicon
+    assert isinstance(structures[0].geometry, mw.Prism)
+
+    poly = structures[0].geometry.poly
+    assert np.isclose(np.min(poly[:, 0]), 0.0)
+    assert np.isclose(np.max(poly[:, 0]), 1.0)
+    assert np.isclose(np.min(poly[:, 1]), 0.0)
+    assert np.isclose(np.max(poly[:, 1]), 2.0)
