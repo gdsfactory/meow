@@ -398,3 +398,187 @@ def test_gdstk_extrusion_rectangle():
     assert np.isclose(np.max(poly[:, 0]), 1.0)
     assert np.isclose(np.min(poly[:, 1]), 0.0)
     assert np.isclose(np.max(poly[:, 1]), 2.0)
+
+
+def test_gdspy_hole():
+    """Essentially a duplicate of test_gdsf_hole"""
+    import gdspy
+
+    cell = gdspy.Cell("hole")
+    cell.add(
+        gdspy.Polygon(
+            [
+                (5, -5),
+                (5, 5),
+                (-5, 5),
+                (-5, -5),
+                (-3, -3),
+                (-3, 3),
+                (3, 3),
+                (3, -3),
+                (-3, -3),
+                (-5, -5),
+            ],
+            layer=1,
+            datatype=0,
+        )
+    )
+
+    extrusion_rules = {
+        (1, 0): [
+            mw.GdsExtrusionRule(
+                material=mw.silicon_oxide,
+                h_min=0,
+                h_max=1,
+                buffer=0.5,
+            ),
+            mw.GdsExtrusionRule(
+                material=mw.silicon_nitride,
+                h_min=1,
+                h_max=2,
+                buffer=0,
+            ),
+            mw.GdsExtrusionRule(
+                material=mw.silicon,
+                h_min=2,
+                h_max=3,
+                buffer=-0.5,
+            ),
+        ]
+    }
+    structures = mw.extrude_gds(cell, extrusions=extrusion_rules)
+    cell_2d = mw.Cell(
+        structures=structures,
+        z_min=-5,
+        z_max=5,
+        mesh=mw.Mesh2D(x=np.linspace(-6, 6, 51), y=np.linspace(-6, 6, 51)),
+    )
+
+    assert (
+        len(cell_2d.structures_2d) == 6
+    )  # 3 extrusion rules, each makes 2 structures on each side
+
+    silicon_oxide_structures = [
+        s for s in cell_2d.structures_2d if s.material == mw.silicon_oxide
+    ]
+    silicon_nitride_structures = [
+        s for s in cell_2d.structures_2d if s.material == mw.silicon_nitride
+    ]
+    silicon_structures = [s for s in cell_2d.structures_2d if s.material == mw.silicon]
+
+    for structures, buffer, h_min in [
+        (silicon_oxide_structures, 0.5, 0),
+        (silicon_nitride_structures, 0, 1),
+        (silicon_structures, -0.5, 2),
+    ]:
+        assert (
+            len(structures) == 2
+        )  # each extrusion rule makes 2 structures on each side
+        structure_left = (
+            structures[0]
+            if structures[0].geometry.x_min < structures[1].geometry.x_min
+            else structures[1]
+        )
+        structure_right: mw.Rectangle = (
+            structures[1] if structure_left is structures[0] else structures[0]
+        )
+
+        assert np.isclose(np.min(structure_left.geometry.x_min), -5 - buffer)
+        assert np.isclose(np.min(structure_left.geometry.y_min), h_min)
+        assert np.isclose(np.max(structure_left.geometry.y_max), h_min + 1)
+
+        assert np.isclose(np.max(structure_right.geometry.x_max), +5 + buffer)
+        assert np.isclose(np.min(structure_right.geometry.y_min), h_min)
+        assert np.isclose(np.max(structure_right.geometry.y_max), h_min + 1)
+
+
+def test_gdstk_hole():
+    """Essentially a duplicate of test_gdsf_hole"""
+    import gdstk
+
+    cell = gdstk.Cell("hole")
+    cell.add(
+        gdstk.Polygon(
+            [
+                (5, -5),
+                (5, 5),
+                (-5, 5),
+                (-5, -5),
+                (-3, -3),
+                (-3, 3),
+                (3, 3),
+                (3, -3),
+                (-3, -3),
+                (-5, -5),
+            ],
+            layer=1,
+            datatype=0,
+        )
+    )
+
+    extrusion_rules = {
+        (1, 0): [
+            mw.GdsExtrusionRule(
+                material=mw.silicon_oxide,
+                h_min=0,
+                h_max=1,
+                buffer=0.5,
+            ),
+            mw.GdsExtrusionRule(
+                material=mw.silicon_nitride,
+                h_min=1,
+                h_max=2,
+                buffer=0,
+            ),
+            mw.GdsExtrusionRule(
+                material=mw.silicon,
+                h_min=2,
+                h_max=3,
+                buffer=-0.5,
+            ),
+        ]
+    }
+    structures = mw.extrude_gds(cell, extrusions=extrusion_rules)
+    cell_2d = mw.Cell(
+        structures=structures,
+        z_min=-5,
+        z_max=5,
+        mesh=mw.Mesh2D(x=np.linspace(-6, 6, 51), y=np.linspace(-6, 6, 51)),
+    )
+
+    assert (
+        len(cell_2d.structures_2d) == 6
+    )  # 3 extrusion rules, each makes 2 structures on each side
+
+    silicon_oxide_structures = [
+        s for s in cell_2d.structures_2d if s.material == mw.silicon_oxide
+    ]
+    silicon_nitride_structures = [
+        s for s in cell_2d.structures_2d if s.material == mw.silicon_nitride
+    ]
+    silicon_structures = [s for s in cell_2d.structures_2d if s.material == mw.silicon]
+
+    for structures, buffer, h_min in [
+        (silicon_oxide_structures, 0.5, 0),
+        (silicon_nitride_structures, 0, 1),
+        (silicon_structures, -0.5, 2),
+    ]:
+        assert (
+            len(structures) == 2
+        )  # each extrusion rule makes 2 structures on each side
+        structure_left = (
+            structures[0]
+            if structures[0].geometry.x_min < structures[1].geometry.x_min
+            else structures[1]
+        )
+        structure_right: mw.Rectangle = (
+            structures[1] if structure_left is structures[0] else structures[0]
+        )
+
+        assert np.isclose(np.min(structure_left.geometry.x_min), -5 - buffer)
+        assert np.isclose(np.min(structure_left.geometry.y_min), h_min)
+        assert np.isclose(np.max(structure_left.geometry.y_max), h_min + 1)
+
+        assert np.isclose(np.max(structure_right.geometry.x_max), +5 + buffer)
+        assert np.isclose(np.min(structure_right.geometry.y_min), h_min)
+        assert np.isclose(np.max(structure_right.geometry.y_max), h_min + 1)
