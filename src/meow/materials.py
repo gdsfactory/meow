@@ -5,13 +5,15 @@ from __future__ import annotations
 import os
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self, TypeAlias, cast
 
 import numpy as np
 import pandas as pd
 import tidy3d as td
-from pydantic import Field, model_validator
+from pydantic import Field, field_serializer, model_validator
+from pydantic.json_schema import GenerateJsonSchema as _GenerateJsonSchema
 from scipy.constants import c
 from scipy.ndimage import map_coordinates
 from tidy3d import material_library
@@ -22,6 +24,25 @@ from tidy3d.material_library.material_library import VariantItem, VariantItemUni
 from meow.arrays import Dim, DType, NDArray
 from meow.base_model import BaseModel
 from meow.environment import Environment
+
+
+class _CallableTolerantJsonSchema(_GenerateJsonSchema):
+    """A JSON-schema generator that tolerates `Callable` fields.
+
+    Pydantic's default raises `PydanticInvalidForJsonSchema` for a callable,
+    which makes a model carrying one impossible to introspect at all. Describing
+    it as an opaque string is accurate enough for schema discovery and keeps
+    `model_json_schema()` usable.
+    """
+
+    def callable_schema(self, schema: Any) -> Any:
+        """Describe a callable as an opaque string."""
+        del schema
+        return {
+            "type": "string",
+            "description": "a Python callable; not representable in JSON",
+        }
+
 
 ComponentType = Literal["x", "y", "z"]
 """Label representing a coordinate axis: 'x', 'y', or 'z'."""
@@ -374,6 +395,180 @@ class AnisotropicIndexMaterial(MaterialBase):
             raise ValueError(msg)
 
         return result
+
+
+class SpatiallyVaryingMaterial(MaterialBase):
+    """A material whose refractive index is given by a user-supplied function.
+
+    The function is called positionally as ``n(x, y, z)``, where ``x`` and ``y``
+    are 2D coordinate arrays at the requested field component's staggered
+    positions and ``z`` is a float or ``None``:
+
+    - ``z`` is ``None`` when the cross-section was built without a known
+      z-position (see ``CrossSection.z``). Each implementation decides how to
+      handle this: a material that does not vary along z may ignore ``z``
+      entirely, whereas a material that genuinely depends on z should raise.
+
+    - The function may return a scalar (broadcast over the mesh) or an array
+      matching the coordinate arrays.
+
+    Either give a single isotropic callable ``n``, or all three of ``nx``,
+    ``ny`` and ``nz`` (equivalently, a biaxial material), mirroring
+    ``IndexMaterial`` and ``AnisotropicIndexMaterial`` respectively.
+    """
+
+    n: Callable[..., Any] | None = Field(
+        default=None,
+        description="isotropic refractive index as a function of (x, y, z)",
+    )
+    nx: Callable[..., Any] | None = Field(
+        default=None,
+        description="refractive index along x as a function of (x, y, z)",
+    )
+    ny: Callable[..., Any] | None = Field(
+        default=None,
+        description="refractive index along y as a function of (x, y, z)",
+    )
+    nz: Callable[..., Any] | None = Field(
+        default=None,
+        description="refractive index along z as a function of (x, y, z)",
+    )
+
+    @model_validator(mode="after")
+    def _validate_callables(self) -> Self:
+        """Check that the given index callables exist and are actually callable."""
+        components = {"x": self.nx, "y": self.ny, "z": self.nz}
+        given = {c: v for c, v in components.items() if v is not None}
+
+        if self.n is not None and given:
+            msg = (
+                f"Material {self.name!r} must specify either an isotropic 'n' or "
+                f"the per-axis 'nx'/'ny'/'nz', not both. Got n and {sorted(given)}."
+            )
+            raise ValueError(msg)
+        if self.n is None and not given:
+            msg = (
+                f"Material {self.name!r} must specify either an isotropic 'n' or "
+                "all of 'nx', 'ny' and 'nz'."
+            )
+            raise ValueError(msg)
+        if given and set(given) != {"x", "y", "z"}:
+            msg = (
+                f"Material {self.name!r} must specify all of 'nx', 'ny' and 'nz'. "
+                f"Got {sorted(given)}."
+            )
+            raise ValueError(msg)
+
+        for label, func in [("n", self.n), *components.items()]:
+            if func is not None and not callable(func):
+                msg = (
+                    f"Material {self.name!r} field {label!r} must be callable. "
+                    f"Got {type(func).__name__}."
+                )
+                raise TypeError(msg)
+        return self
+
+    def _callable_for(self, component: ComponentType | None) -> Callable[..., Any]:
+        """Return the index callable for the given component.
+
+        Raises:
+            ValueError: if ``component`` is not one of 'x', 'y', 'z' for an
+                anisotropic material.
+        """
+        if self.n is not None:
+            return self.n
+        if component not in ("x", "y", "z"):
+            msg = (
+                "Component must be specified for anisotropic materials. "
+                f"Must be 'x', 'y', or 'z', but it was {component}."
+            )
+            raise ValueError(msg)
+        return cast(
+            Callable[..., Any], {"x": self.nx, "y": self.ny, "z": self.nz}[component]
+        )
+
+    def __call__(
+        self,
+        env: Environment,
+        component: ComponentType | None = None,
+    ) -> float | complex:
+        """Not supported: this material needs coordinates to be evaluated.
+
+        This just raises NotImplementedError. Use `n_at` instead, which
+        `CrossSection` calls with the mesh coordinates.
+        """
+        msg = (
+            f"Material {self.name!r} is spatially varying and cannot be evaluated "
+            "without coordinates. Use 'n_at(env, x, y, z, component=...)' instead."
+        )
+        raise NotImplementedError(msg)
+
+    def n_at(
+        self,
+        env: Environment,  # noqa: ARG002
+        x: NDArray,
+        y: NDArray,
+        z: float | None,
+        component: ComponentType | None = None,
+    ) -> NDArray:
+        """Evaluate the refractive index at the given coordinates.
+
+        If x or y are arrays, they must be broadcastable to the same shape. The
+        returned refractive index will have a shape broadcasted to match x and y.
+
+        Args:
+            env: the environment. Not passed to the index callable, but
+                overridden methods in subclasses may use it.
+            x: x coordinates.
+            y: y coordinates.
+            z: z coordinate, or None if unknown.
+            component: 'x', 'y' or 'z'; required for an anisotropic material.
+
+        Returns:
+            The refractive index, as an array broadcastable to ``x``.
+        """
+        func = self._callable_for(component)
+        return np.asarray(func(x, y, z))
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Build a JSON schema that describes the callables as opaque strings.
+
+        Pydantic cannot build a schema for a `Callable` field and raises
+        `PydanticInvalidForJsonSchema`. That is unhelpful here: this model is
+        never serialized anyway (see `_serialize_callable`), yet callers walking
+        the public models -- `test_schemas.ipynb` does exactly that -- would hit
+        a hard error just for asking. Injecting a tolerant schema generator
+        keeps such introspection working.
+        """
+        kwargs.setdefault("schema_generator", _CallableTolerantJsonSchema)
+        return super().model_json_schema(*args, **kwargs)
+
+    @field_serializer("n", "nx", "ny", "nz")
+    def _serialize_callable(self, value: Callable[..., Any] | None) -> Any:
+        """Raise a clear error instead of orjson's generic message.
+
+        Serialization already fails loudly without this (``orjson`` cannot
+        encode a function); this only improves the message, naming both the
+        material and the callable that cannot be encoded.
+        """
+        if value is None:
+            return None
+        msg = (
+            f"Material {self.name!r} is spatially varying and cannot be serialized: "
+            f"its refractive index is the callable {value!r}, which has no "
+            "serialized representation. Reconstruct it from source instead."
+        )
+        raise TypeError(msg)
+
+    def __reduce__(self) -> Any:
+        """Raise: pickling (e.g. `Mode.save`) cannot roundtrip a callable."""
+        msg = (
+            f"Material {self.name!r} is spatially varying and cannot be pickled: "
+            "its refractive index is a user-supplied Python callable, which is "
+            "typically a closure and cannot be reconstructed."
+        )
+        raise TypeError(msg)
 
 
 class SampledMaterial(MaterialBase):
@@ -733,6 +928,7 @@ class AnisotropicDispersiveMaterial(MaterialBase):
 Material: TypeAlias = (
     IndexMaterial
     | AnisotropicIndexMaterial
+    | SpatiallyVaryingMaterial
     | SampledMaterial
     | SampledAnisotropicMaterial
     | SampledUniaxialMaterial
@@ -741,9 +937,10 @@ Material: TypeAlias = (
     | AnisotropicDispersiveMaterial
     | TidyMaterial
 )
-"""A material: `IndexMaterial`, `AnisotropicIndexMaterial`, `SampledMaterial`,
-`SampledAnisotropicMaterial`, `SampledUniaxialMaterial`, `DispersiveMaterial`,
-`UniaxialDispersiveMaterial`, `AnisotropicDispersiveMaterial`, or `TidyMaterial`."""
+"""A material: `IndexMaterial`, `AnisotropicIndexMaterial`,
+`SpatiallyVaryingMaterial`, `SampledMaterial`, `SampledAnisotropicMaterial`,
+`SampledUniaxialMaterial`, `DispersiveMaterial`, `UniaxialDispersiveMaterial`,
+`AnisotropicDispersiveMaterial`, or `TidyMaterial`."""
 Materials: TypeAlias = list[Material]
 """A list of `Material` objects."""
 MATERIALS: dict[str, MaterialBase] = {}
